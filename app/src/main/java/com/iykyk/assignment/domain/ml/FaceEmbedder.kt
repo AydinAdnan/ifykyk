@@ -54,34 +54,40 @@ class TFLiteFaceEmbedder(private val context: Context? = null) : FaceEmbedder {
     }
 
     private fun runInference(interp: Interpreter, bitmap: Bitmap): FloatArray {
-        val inputShape = interp.getInputTensor(0).shape() // e.g. [1, 160, 160, 3] or [1, 112, 112, 3]
-        val targetH = if (inputShape.size >= 3) inputShape[1] else 112
-        val targetW = if (inputShape.size >= 3) inputShape[2] else 112
+        return try {
+            val inputShape = interp.getInputTensor(0).shape() // e.g. [1, 160, 160, 3] or [1, 112, 112, 3]
+            val targetH = if (inputShape.size >= 3) inputShape[1] else 112
+            val targetW = if (inputShape.size >= 3) inputShape[2] else 112
 
-        val scaled = Bitmap.createScaledBitmap(bitmap, targetW, targetH, true)
-        val inputBuffer = ByteBuffer.allocateDirect(1 * targetW * targetH * 3 * 4).apply {
-            order(ByteOrder.nativeOrder())
+            val scaled = Bitmap.createScaledBitmap(bitmap, targetW, targetH, true)
+            val inputBuffer = ByteBuffer.allocateDirect(1 * targetW * targetH * 3 * 4).apply {
+                order(ByteOrder.nativeOrder())
+            }
+            inputBuffer.rewind()
+
+            val pixels = IntArray(targetW * targetH)
+            scaled.getPixels(pixels, 0, targetW, 0, 0, targetW, targetH)
+
+            for (pixel in pixels) {
+                val r = ((pixel shr 16) and 0xFF) - 127.5f
+                val g = ((pixel shr 8) and 0xFF) - 127.5f
+                val b = (pixel and 0xFF) - 127.5f
+                inputBuffer.putFloat(r / 128.0f)
+                inputBuffer.putFloat(g / 128.0f)
+                inputBuffer.putFloat(b / 128.0f)
+            }
+            inputBuffer.rewind() // Crucial: reset position to 0 so TFLite reads from beginning
+
+            val outShape = interp.getOutputTensor(0).shape()
+            val outDim = if (outShape.isNotEmpty()) outShape.last() else embeddingDim
+            val outputArray = Array(1) { FloatArray(outDim) }
+            interp.run(inputBuffer, outputArray)
+
+            l2Normalize(outputArray[0])
+        } catch (e: Throwable) {
+            e.printStackTrace()
+            computeDeterministicFeatureVector(bitmap)
         }
-        inputBuffer.rewind()
-
-        val pixels = IntArray(targetW * targetH)
-        scaled.getPixels(pixels, 0, targetW, 0, 0, targetW, targetH)
-
-        for (pixel in pixels) {
-            val r = ((pixel shr 16) and 0xFF) - 127.5f
-            val g = ((pixel shr 8) and 0xFF) - 127.5f
-            val b = (pixel and 0xFF) - 127.5f
-            inputBuffer.putFloat(r / 128.0f)
-            inputBuffer.putFloat(g / 128.0f)
-            inputBuffer.putFloat(b / 128.0f)
-        }
-
-        val outShape = interp.getOutputTensor(0).shape()
-        val outDim = if (outShape.isNotEmpty()) outShape.last() else embeddingDim
-        val outputArray = Array(1) { FloatArray(outDim) }
-        interp.run(inputBuffer, outputArray)
-
-        return l2Normalize(outputArray[0])
     }
 
     /**
