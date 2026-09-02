@@ -35,7 +35,11 @@ class CollageCanvasRenderer(private val context: Context) {
     }
 
     /**
-     * Renders a 1080x1920 Instagram Story scrapbook poster matching the template design.
+     * Renders a 1080x1920 Instagram Story scrapbook poster.
+     *
+     * Every person detected in the video gets exactly one card, captioned with how many
+     * separate appearances they made, so the layout has to work for any number of people
+     * rather than for the five the template was drawn around.
      */
     suspend fun renderCollageBitmap(
         clusters: List<PersonCluster>,
@@ -46,18 +50,41 @@ class CollageCanvasRenderer(private val context: Context) {
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
 
-        // 1. Aged Vintage Parchment Background (#F2ECE1)
+        drawPaperBackground(canvas, width, height)
+
+        val colorBases = listOf(
+            Color.parseColor("#9370DB"), // Purple watercolor
+            Color.parseColor("#F472B6"), // Pink watercolor
+            Color.parseColor("#FBBF24"), // Yellow gold
+            Color.parseColor("#FB7185"), // Coral / peach
+            Color.parseColor("#38BDF8"), // Sky blue
+            Color.parseColor("#34D399")  // Mint
+        )
+
+        val headerBottom = drawHeader(canvas, width, titleText, clusters)
+        val footerTop = drawFooter(canvas, width, height, clusters)
+
+        CollageLayout.place(clusters.size, width, headerBottom, footerTop).forEachIndexed { i, slot ->
+            drawScrapbookPhotoCard(
+                canvas = canvas,
+                cx = slot.cx,
+                cy = slot.cy,
+                w = slot.w,
+                h = slot.h,
+                rot = slot.rotation,
+                bgColor = colorBases[i % colorBases.size],
+                tapeIsPink = i % 2 != 0,
+                cluster = clusters[i],
+                compact = slot.w < CollageLayout.COMPACT_WIDTH
+            )
+        }
+
+        bitmap
+    }
+
+    private fun drawPaperBackground(canvas: Canvas, width: Int, height: Int) {
         canvas.drawColor(Color.parseColor("#F3ECE0"))
 
-        // Subtle aged paper border & paper grain tone
-        val borderPaper = Paint().apply {
-            color = Color.parseColor("#E4D9C8")
-            style = Paint.Style.STROKE
-            strokeWidth = 24f
-        }
-        canvas.drawRect(RectF(12f, 12f, width - 12f, height - 12f), borderPaper)
-
-        // Grid paper lines in center area
         val gridLine = Paint().apply {
             color = Color.parseColor("#EAE0D0")
             strokeWidth = 1.5f
@@ -68,96 +95,99 @@ class CollageCanvasRenderer(private val context: Context) {
             gy += 45f
         }
 
-        // Draw botanical doodle / dried flower sprig in bottom-left
-        drawBotanicalSprig(canvas, 100f, 1720f)
-
-        // Draw doodle burst lines in top-right
-        drawBurstLines(canvas, 920f, 180f)
-
-        // Draw scribble loops in mid-right
-        drawScribbleLoops(canvas, 960f, 1240f)
-
-        // Draw sparkle stars in mid-left
-        sparkleBmp?.let { sp ->
-            canvas.drawBitmap(sp, 80f, 850f, null)
+        val borderPaper = Paint().apply {
+            color = Color.parseColor("#E4D9C8")
+            style = Paint.Style.STROKE
+            strokeWidth = 24f
         }
+        canvas.drawRect(RectF(12f, 12f, width - 12f, height - 12f), borderPaper)
 
-        // Draw heart doodle in bottom-right
-        heartDoodleBmp?.let { hd ->
-            canvas.drawBitmap(hd, 900f, 1740f, null)
+        drawBotanicalSprig(canvas, 90f, 1660f)
+        drawBurstLines(canvas, 940f, 250f)
+        drawScribbleLoops(canvas, 40f, 1120f)
+        sparkleBmp?.let { canvas.drawBitmap(it, 962f, 1180f, null) }
+        heartDoodleBmp?.let { canvas.drawBitmap(it, 916f, 1706f, null) }
+    }
+
+    /** Draws the title block and returns the y coordinate where cards may start. */
+    private fun drawHeader(
+        canvas: Canvas,
+        width: Int,
+        titleText: String,
+        clusters: List<PersonCluster>
+    ): Float {
+        val people = clusters.size
+        val appearances = clusters.sumOf { it.appearanceCount }
+
+        val countPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#18181B")
+            textAlign = Paint.Align.CENTER
+            textSize = 150f
+            typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
         }
+        canvas.drawText(people.toString(), width / 2f, 190f, countPaint)
 
-        // 2. Coordinated Card Layout (Matching 5-Photo Scrapbook Template)
-        val colorBases = listOf(
-            Color.parseColor("#9370DB"), // Purple watercolor
-            Color.parseColor("#F472B6"), // Pink watercolor
-            Color.parseColor("#FBBF24"), // Yellow gold
-            Color.parseColor("#FB7185"), // Coral / peach
-            Color.parseColor("#38BDF8")  // Sky blue
+        val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#18181B")
+            textAlign = Paint.Align.CENTER
+            textSize = 54f
+            letterSpacing = 0.22f
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+        }
+        canvas.drawText(
+            if (people == 1) "UNIQUE PERSON" else titleText,
+            width / 2f,
+            250f,
+            titlePaint
         )
 
-        val n = clusters.size
-        if (n == 5) {
-            // Exact 5-Card Layout from user's template:
-            // 1. Top-Left (Purple, -4.5 deg)
-            drawScrapbookPhotoCard(
-                canvas, cx = 290f, cy = 420f, w = 420f, h = 530f, rot = -4.5f,
-                bgColor = colorBases[0], tapeIsPink = false,
-                cluster = clusters[0]
-            )
-
-            // 2. Top-Right (Pink, +4.0 deg)
-            drawScrapbookPhotoCard(
-                canvas, cx = 790f, cy = 460f, w = 420f, h = 530f, rot = 4.0f,
-                bgColor = colorBases[1], tapeIsPink = true,
-                cluster = clusters[1]
-            )
-
-            // 3. Center Hero (Yellow, 0.0 deg with grid note scrap)
-            drawGridNoteScrap(canvas, 700f, 980f, 140f, 260f, 8f)
-            drawScrapbookPhotoCard(
-                canvas, cx = 540f, cy = 970f, w = 450f, h = 560f, rot = 0.0f,
-                bgColor = colorBases[2], tapeIsPink = false,
-                cluster = clusters[2]
-            )
-
-            // 4. Bottom-Left (Coral, +3.5 deg)
-            drawScrapbookPhotoCard(
-                canvas, cx = 300f, cy = 1520f, w = 430f, h = 540f, rot = 3.5f,
-                bgColor = colorBases[3], tapeIsPink = true,
-                cluster = clusters[3]
-            )
-
-            // 5. Bottom-Right (Blue, -3.0 deg)
-            drawScrapbookPhotoCard(
-                canvas, cx = 780f, cy = 1550f, w = 430f, h = 540f, rot = -3.0f,
-                bgColor = colorBases[4], tapeIsPink = false,
-                cluster = clusters[4]
-            )
-        } else {
-            // Adaptive Grid for other counts (1 to 6 people)
-            val cols = if (n <= 4) 2 else 3
-            val rows = (n + cols - 1) / cols
-            val startY = 240f
-            val availableHeight = 1500f
-            val cellW = (width - 100f) / cols
-            val cellH = availableHeight / rows
-
-            clusters.forEachIndexed { i, cl ->
-                val col = i % cols
-                val row = i / cols
-                val cx = 50f + col * cellW + cellW / 2f
-                val cy = startY + row * cellH + cellH / 2f
-                val rot = if (i % 2 == 0) -3f else 3f
-                drawScrapbookPhotoCard(
-                    canvas, cx = cx, cy = cy, w = cellW * 0.90f, h = cellH * 0.88f, rot = rot,
-                    bgColor = colorBases[i % colorBases.size], tapeIsPink = (i % 2 != 0),
-                    cluster = cl
-                )
-            }
+        val underline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#C2410C")
+            strokeWidth = 5f
+            strokeCap = Paint.Cap.ROUND
         }
+        canvas.drawLine(width / 2f - 130f, 276f, width / 2f + 130f, 276f, underline)
 
-        bitmap
+        val subtitlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#7A6A55")
+            textAlign = Paint.Align.CENTER
+            textSize = 34f
+            typeface = Typeface.create(Typeface.SERIF, Typeface.ITALIC)
+        }
+        canvas.drawText(
+            "$appearances ${if (appearances == 1) "appearance" else "appearances"} in this video",
+            width / 2f,
+            330f,
+            subtitlePaint
+        )
+
+        return 370f
+    }
+
+    /** Draws the footer strip and returns the y coordinate where cards must stop. */
+    private fun drawFooter(
+        canvas: Canvas,
+        width: Int,
+        height: Int,
+        clusters: List<PersonCluster>
+    ): Float {
+        val footerTop = height - 130f
+
+        val notePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#8C7853")
+            textAlign = Paint.Align.CENTER
+            textSize = 30f
+            typeface = Typeface.create(Typeface.SERIF, Typeface.ITALIC)
+        }
+        val busiest = clusters.maxByOrNull { it.appearanceCount }
+        val note = if (busiest != null && busiest.appearanceCount > 1) {
+            "most seen: ${busiest.personLabel} - ${busiest.appearanceCount} appearances"
+        } else {
+            "everyone who appeared, once each"
+        }
+        canvas.drawText(note, width / 2f, height - 70f, notePaint)
+
+        return footerTop
     }
 
     private fun drawScrapbookPhotoCard(
@@ -169,7 +199,8 @@ class CollageCanvasRenderer(private val context: Context) {
         rot: Float,
         bgColor: Int,
         tapeIsPink: Boolean,
-        cluster: PersonCluster
+        cluster: PersonCluster,
+        compact: Boolean
     ) {
         canvas.save()
         canvas.rotate(rot, cx, cy)
@@ -177,86 +208,180 @@ class CollageCanvasRenderer(private val context: Context) {
         val left = cx - w / 2f
         val top = cy - h / 2f
 
-        // 1. Soft Shadow
-        val shadowPaint = Paint().apply {
+        val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.argb(45, 30, 30, 30)
             style = Paint.Style.FILL
-            isAntiAlias = true
             maskFilter = BlurMaskFilter(14f, BlurMaskFilter.Blur.NORMAL)
         }
-        canvas.drawRoundRect(RectF(left + 6f, top + 10f, left + w + 6f, top + h + 10f), 8f, 8f, shadowPaint)
+        canvas.drawRoundRect(
+            RectF(left + 6f, top + 10f, left + w + 6f, top + h + 10f),
+            8f, 8f, shadowPaint
+        )
 
-        // 2. Torn Colored Watercolor Backing Paper
-        val tornBgPaint = Paint().apply {
+        val tornBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = bgColor
             style = Paint.Style.FILL
-            isAntiAlias = true
         }
-        val tornPath = createTornRectPath(left, top, w, h, 6f)
-        canvas.drawPath(tornPath, tornBgPaint)
+        canvas.drawPath(createTornRectPath(left, top, w, h, 6f), tornBgPaint)
 
-        // 3. White Polaroid Frame with deckle edge
-        val margin = 20f
+        val margin = w * 0.05f
         val whiteLeft = left + margin
         val whiteTop = top + margin
-        val whiteW = w - (margin * 2f)
-        val whiteH = h - (margin * 2f)
+        val whiteW = w - margin * 2f
+        val whiteH = h - margin * 2f
 
-        val whitePaint = Paint().apply {
+        val whitePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
             style = Paint.Style.FILL
-            isAntiAlias = true
         }
-        val whiteBorder = Paint().apply {
+        val whiteBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.parseColor("#2518181B")
             style = Paint.Style.STROKE
             strokeWidth = 2f
-            isAntiAlias = true
         }
         val innerTorn = createTornRectPath(whiteLeft, whiteTop, whiteW, whiteH, 3f)
         canvas.drawPath(innerTorn, whitePaint)
         canvas.drawPath(innerTorn, whiteBorder)
 
-        // 4. The Person's Best Photo Crop
-        val photoMargin = 12f
-        val pLeft = whiteLeft + photoMargin
-        val pTop = whiteTop + photoMargin
-        val pW = whiteW - (photoMargin * 2f)
-        val pH = whiteH - (photoMargin * 2f)
-        val photoRect = RectF(pLeft, pTop, pLeft + pW, pTop + pH)
+        // Polaroid proportions: a wide caption skirt below the photo carries the name and
+        // the appearance count, which the assignment asks to be shown per person.
+        val photoMargin = whiteW * 0.05f
+        val captionH = if (compact) whiteH * 0.20f else whiteH * 0.17f
+        val photoRect = RectF(
+            whiteLeft + photoMargin,
+            whiteTop + photoMargin,
+            whiteLeft + whiteW - photoMargin,
+            whiteTop + whiteH - captionH
+        )
 
-        val faceBmp = cluster.representativeShot.generousCropBitmap ?: cluster.representativeShot.alignedCropBitmap
-        if (faceBmp != null) {
-            canvas.save()
-            canvas.clipRect(photoRect)
-            val src = Rect(0, 0, faceBmp.width, faceBmp.height)
-            val dst = Rect(pLeft.toInt(), pTop.toInt(), (pLeft + pW).toInt(), (pTop + pH).toInt())
-            canvas.drawBitmap(faceBmp, src, dst, Paint(Paint.FILTER_BITMAP_FLAG))
-            canvas.restore()
-        }
+        drawPhotoAspectFill(canvas, cluster, photoRect)
 
-        // Inner photo outline
-        val photoOutline = Paint().apply {
+        val photoOutline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.parseColor("#20000000")
             style = Paint.Style.STROKE
             strokeWidth = 1.5f
         }
         canvas.drawRect(photoRect, photoOutline)
 
-        // 5. Washi Tape on Top Center
+        drawCaption(canvas, cluster, whiteLeft, whiteW, photoRect.bottom, captionH, bgColor, compact)
+
         val tapeBmp = if (tapeIsPink) washiPinkBmp else washiYellowBmp
         tapeBmp?.let { tape ->
-            val tw = 160f
-            val th = 50f
+            val tw = w * 0.42f
+            val th = tw * 0.31f
             val tLeft = cx - tw / 2f
             val tTop = top - th / 2f + 4f
-            val src = Rect(0, 0, tape.width, tape.height)
-            val dst = Rect(tLeft.toInt(), tTop.toInt(), (tLeft + tw).toInt(), (tTop + th).toInt())
-            canvas.drawBitmap(tape, src, dst, Paint(Paint.FILTER_BITMAP_FLAG))
+            canvas.drawBitmap(
+                tape,
+                Rect(0, 0, tape.width, tape.height),
+                Rect(tLeft.toInt(), tTop.toInt(), (tLeft + tw).toInt(), (tTop + th).toInt()),
+                Paint(Paint.FILTER_BITMAP_FLAG)
+            )
         }
 
         canvas.restore()
     }
+
+    /**
+     * Draws the person's photo filling [dest] without distorting it.
+     *
+     * The previous version mapped the whole crop onto the tile rectangle, so any crop whose
+     * aspect ratio differed from the card - which is most of them - was stretched, and
+     * faces came out subtly widened or squashed. This scales uniformly and centres the
+     * overflowing axis, biased slightly upward because the subject sits above centre in a
+     * portrait crop.
+     */
+    private fun drawPhotoAspectFill(canvas: Canvas, cluster: PersonCluster, dest: RectF) {
+        val faceBmp = cluster.representativeShot.generousCropBitmap
+            ?: cluster.representativeShot.alignedCropBitmap
+            ?: return
+
+        val destAspect = dest.width() / dest.height()
+        val srcAspect = faceBmp.width.toFloat() / faceBmp.height
+
+        val src = if (srcAspect > destAspect) {
+            // Source is wider: trim the sides.
+            val keepW = (faceBmp.height * destAspect).toInt().coerceAtLeast(1)
+            val x = ((faceBmp.width - keepW) / 2).coerceAtLeast(0)
+            Rect(x, 0, x + keepW, faceBmp.height)
+        } else {
+            // Source is taller: trim mostly from the bottom, keeping the head in view.
+            val keepH = (faceBmp.width / destAspect).toInt().coerceAtLeast(1)
+            val y = ((faceBmp.height - keepH) * 0.35f).toInt().coerceAtLeast(0)
+            Rect(0, y, faceBmp.width, (y + keepH).coerceAtMost(faceBmp.height))
+        }
+
+        canvas.save()
+        canvas.clipRect(dest)
+        canvas.drawBitmap(
+            faceBmp,
+            src,
+            Rect(
+                dest.left.toInt(),
+                dest.top.toInt(),
+                dest.right.toInt(),
+                dest.bottom.toInt()
+            ),
+            Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+        )
+        canvas.restore()
+    }
+
+    /** Handwritten-style name plus the appearance count for one person. */
+    private fun drawCaption(
+        canvas: Canvas,
+        cluster: PersonCluster,
+        whiteLeft: Float,
+        whiteW: Float,
+        captionTop: Float,
+        captionH: Float,
+        accent: Int,
+        compact: Boolean
+    ) {
+        val centerX = whiteLeft + whiteW / 2f
+
+        val namePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#18181B")
+            textAlign = Paint.Align.CENTER
+            textSize = if (compact) 26f else 34f
+            typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
+        }
+        canvas.drawText(cluster.personLabel, centerX, captionTop + captionH * 0.42f, namePaint)
+
+        val count = cluster.appearanceCount
+        val countLabel = if (compact) {
+            "x$count"
+        } else {
+            "$count ${if (count == 1) "appearance" else "appearances"}"
+        }
+
+        val countPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#5A5148")
+            textAlign = Paint.Align.CENTER
+            textSize = if (compact) 21f else 26f
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+        }
+
+        val badgeY = captionTop + captionH * 0.76f
+        val textWidth = countPaint.measureText(countLabel)
+        val padX = if (compact) 10f else 16f
+        val badgeRect = RectF(
+            centerX - textWidth / 2f - padX,
+            badgeY - countPaint.textSize * 0.86f,
+            centerX + textWidth / 2f + padX,
+            badgeY + countPaint.textSize * 0.34f
+        )
+
+        val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = withAlpha(accent, 48)
+            style = Paint.Style.FILL
+        }
+        canvas.drawRoundRect(badgeRect, badgeRect.height() / 2f, badgeRect.height() / 2f, badgePaint)
+        canvas.drawText(countLabel, centerX, badgeY, countPaint)
+    }
+
+    private fun withAlpha(color: Int, alpha: Int): Int =
+        Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
 
     private fun createTornRectPath(l: Float, t: Float, w: Float, h: Float, jitter: Float): Path {
         val path = Path()
