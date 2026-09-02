@@ -62,37 +62,37 @@ object FaceAlignmentHelper {
     }
 
     /**
-     * Generous crop around the face (adds ~35% margin) for the final scrapbook stamp collage.
-     * In group frames, bounds are strictly clamped to avoid including neighboring faces.
+     * Generous centered crop around the face for beautiful Polaroid framing.
+     * Aligns center on face and includes hair, chin, and upper collar.
      */
     fun cropGenerousFace(frame: Bitmap, box: Rect, otherBoxes: List<Rect> = emptyList()): Bitmap {
-        var marginX = (box.width() * 0.35f).toInt()
-        var marginY = (box.height() * 0.35f).toInt()
+        val faceW = box.width().toFloat()
+        val faceH = box.height().toFloat()
+
+        val marginX = (faceW * 0.40f).toInt()
+        val marginTop = (faceH * 0.35f).toInt()
+        val marginBottom = (faceH * 0.45f).toInt()
 
         var left = max(0, box.left - marginX)
-        var top = max(0, box.top - marginY)
+        var top = max(0, box.top - marginTop)
         var right = min(frame.width, box.right + marginX)
-        var bottom = min(frame.height, box.bottom + marginY)
+        var bottom = min(frame.height, box.bottom + marginBottom)
 
         // Avoid encroaching on other detected faces in the same frame
         for (other in otherBoxes) {
             if (other == box) continue
-            // If other face is to the right
             if (other.left >= box.right) {
                 val midX = (box.right + other.left) / 2
                 right = min(right, midX)
             }
-            // If other face is to the left
             if (other.right <= box.left) {
                 val midX = (other.right + box.left) / 2
                 left = max(left, midX)
             }
-            // If other face is below
             if (other.top >= box.bottom) {
                 val midY = (box.bottom + other.top) / 2
                 bottom = min(bottom, midY)
             }
-            // If other face is above
             if (other.bottom <= box.top) {
                 val midY = (other.bottom + box.top) / 2
                 top = max(top, midY)

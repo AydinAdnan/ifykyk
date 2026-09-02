@@ -1,4 +1,4 @@
-﻿package com.iykyk.assignment.domain.pipeline
+package com.iykyk.assignment.domain.pipeline
 
 import com.iykyk.assignment.domain.ml.FaceEmbedder
 import com.iykyk.assignment.domain.model.DetectedFace
@@ -6,8 +6,8 @@ import kotlin.math.sqrt
 
 class AgglomerativeClusterer(
     private val embedder: FaceEmbedder,
-    private val similarityThreshold: Float = 0.48f,
-    private val centroidMergeThreshold: Float = 0.54f
+    private val similarityThreshold: Float = 0.58f,
+    private val centroidMergeThreshold: Float = 0.64f
 ) {
 
     /**
@@ -24,7 +24,9 @@ class AgglomerativeClusterer(
         }
 
         var improved = true
-        while (improved && clusters.size > 1) {
+        var loopCount = 0
+        while (improved && clusters.size > 1 && loopCount < 300) {
+            loopCount++
             improved = false
             var bestSim = -1f
             var mergeI = -1
@@ -53,7 +55,9 @@ class AgglomerativeClusterer(
 
         // Pass 2: Centroid merge pass to heal split clusters across lighting/angle changes
         var merged = true
-        while (merged && clusters.size > 1) {
+        var mergeLoopCount = 0
+        while (merged && clusters.size > 1 && mergeLoopCount < 150) {
+            mergeLoopCount++
             merged = false
             var bestCentroidSim = -1f
             var mergeI = -1
@@ -81,14 +85,13 @@ class AgglomerativeClusterer(
             }
         }
 
-        // Filter out accidental single-frame noise artifacts if larger real clusters exist
-        val maxClusterSize = clusters.maxOfOrNull { it.size } ?: 1
-        val minValidSize = if (maxClusterSize >= 4) 2 else 1
-        val filteredClusters = clusters.filter { it.size >= minValidSize }
-            .ifEmpty { clusters }
+        // Keep all valid detected persons without discarding brief appearances
+        val validClusters = clusters.filter { cluster ->
+            cluster.isNotEmpty()
+        }.ifEmpty { clusters }
 
-        // Sort clusters by number of faces descending (most seen first)
-        val sortedClusters = filteredClusters.sortedByDescending { it.size }
+        // Sort clusters by number of faces descending (most prominent first)
+        val sortedClusters = validClusters.sortedByDescending { it.size }
         val resultMap = mutableMapOf<Int, List<DetectedFace>>()
         sortedClusters.forEachIndexed { index, faceList ->
             resultMap[index + 1] = faceList
