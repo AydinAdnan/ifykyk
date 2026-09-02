@@ -2,6 +2,7 @@ package com.iykyk.assignment.domain.pipeline
 
 import com.iykyk.assignment.domain.ml.FaceEmbedder
 import com.iykyk.assignment.domain.model.DetectedFace
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
@@ -41,7 +42,12 @@ data class Tracklet(
 class TrackletBuilder(
     private val embedder: FaceEmbedder,
     /** Overlap between boxes in adjacent frames above which they are the same track. */
-    private val minIou: Float = 0.35f,
+    private val minIou: Float = 0.3f,
+    /**
+     * Alternative to overlap for fast motion: centres closer together than this multiple
+     * of the face width are the same track even when the boxes no longer intersect.
+     */
+    private val maxCentreDrift: Float = 1.1f,
     /** Frames may be skipped this many times before a track is considered ended. */
     private val maxFrameGap: Int = 2,
     /** A geometric match is rejected if the faces look this dissimilar. */
@@ -124,9 +130,17 @@ class TrackletBuilder(
         val sameTrackingId = previous.trackingId != null &&
             previous.trackingId == candidate.trackingId
 
-        // A reissued or absent tracking ID must not break a track that geometry supports,
-        // and a stale reused ID must not join boxes that are nowhere near each other.
-        if (iou < minIou && !(sameTrackingId && iou > 0.1f)) return 0f
+        // Overlap alone is too brittle on handheld footage. A third of a second of camera
+        // shake can move a face further than its own width, dropping IoU to zero between
+        // consecutive samples even though nothing else changed, which shatters one person
+        // into a string of single-frame tracks with unreliable identities. Proximity
+        // relative to face size survives that; the scale gate above keeps it honest.
+        val centreDistance = hypot(a.exactCenterX() - b.exactCenterX(), a.exactCenterY() - b.exactCenterY())
+        val faceSpan = max(a.width(), b.width()).toFloat().coerceAtLeast(1f)
+        val drift = centreDistance / faceSpan
+        val nearby = drift <= maxCentreDrift
+
+        if (iou < minIou && !nearby && !(sameTrackingId && iou > 0.1f)) return 0f
 
         val appearance = if (previous.embedding.isNotEmpty() && candidate.embedding.isNotEmpty()) {
             embedder.cosineSimilarity(previous.embedding, candidate.embedding)
@@ -135,7 +149,8 @@ class TrackletBuilder(
         }
         if (appearance < minAppearanceSimilarity) return 0f
 
-        return iou + (if (sameTrackingId) 0.5f else 0f) + appearance * 0.25f
+        val proximity = (1f - (drift / maxCentreDrift)).coerceIn(0f, 1f)
+        return iou + proximity * 0.4f + (if (sameTrackingId) 0.5f else 0f) + appearance * 0.25f
     }
 
     private fun iou(

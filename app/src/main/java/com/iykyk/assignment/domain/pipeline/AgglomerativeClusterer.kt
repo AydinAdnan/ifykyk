@@ -2,6 +2,9 @@ package com.iykyk.assignment.domain.pipeline
 
 import com.iykyk.assignment.domain.ml.FaceEmbedder
 import com.iykyk.assignment.domain.model.DetectedFace
+import kotlin.math.hypot
+import kotlin.math.max
+import kotlin.math.min
 
 /**
  * Groups tracklets into people.
@@ -26,7 +29,16 @@ class AgglomerativeClusterer(
      */
     private val similarityThreshold: Float = 0.55f,
     /** Minimum recognitionQuality for a detection to contribute to identity. */
-    private val minRecognitionQuality: Float = 0.22f
+    private val minRecognitionQuality: Float = 0.22f,
+    /**
+     * Extra similarity demanded before absorbing a low-confidence track into a person.
+     *
+     * A track made only of blurred or half-turned faces has a noisy centroid that can sit
+     * closer to a stranger than to itself. Merging it on the same evidence as a clean
+     * track makes people vanish: whoever only ever appears in the shaky part of the clip
+     * gets quietly folded into someone who was well filmed.
+     */
+    private val lowConfidenceMargin: Float = 0.08f
 ) {
 
     /**
@@ -79,18 +91,21 @@ class AgglomerativeClusterer(
                 }
             }
 
-            if (bestSim < similarityThreshold || mergeI < 0) break
+            if (mergeI < 0 || bestSim < requiredSimilarity(groups[mergeI], groups[mergeJ])) break
 
             groups[mergeI].addAll(groups[mergeJ])
             groups.removeAt(mergeJ)
         }
 
-        // Attach unidentifiable tracklets to whichever person they overlap in time and
-        // space, otherwise leave them as their own person.
+        // Tracklets with no usable face are attached only where the geometry genuinely
+        // implies continuity: the same person, seen moments earlier or later, in nearly
+        // the same place. Time proximity on its own was enough before, which meant a
+        // stranger who happened to appear right after someone else was silently merged
+        // into them and disappeared from the results.
         for (orphan in unidentifiable) {
             val host = groups.firstOrNull { group ->
                 !coOccur(group, listOf(orphan)) &&
-                    group.any { timeOverlapsClosely(it, orphan) }
+                    group.any { timeOverlapsClosely(it, orphan) && continuesSpatially(it, orphan) }
             }
             if (host != null) host.add(orphan) else groups.add(mutableListOf(orphan))
         }
@@ -104,6 +119,24 @@ class AgglomerativeClusterer(
         return groups.mapIndexed { index, group ->
             (index + 1) to group.sortedBy { it.startMs }
         }.toMap()
+    }
+
+    /**
+     * Similarity two groups must reach to merge, raised when either side's identity rests
+     * on poor-quality faces.
+     */
+    private fun requiredSimilarity(a: List<Tracklet>, b: List<Tracklet>): Float {
+        val confidence = min(groupConfidence(a), groupConfidence(b))
+        return similarityThreshold + (1f - confidence) * lowConfidenceMargin
+    }
+
+    /** How much the faces backing a group's identity can be trusted, in 0..1. */
+    private fun groupConfidence(group: List<Tracklet>): Float {
+        val best = group.flatMap { it.detections }
+            .map { it.recognitionQuality }
+            .sortedDescending()
+            .take(3)
+        return if (best.isEmpty()) 0f else best.average().toFloat().coerceIn(0f, 1f)
     }
 
     /**
@@ -140,6 +173,27 @@ class AgglomerativeClusterer(
     private fun timeOverlapsClosely(a: Tracklet, b: Tracklet): Boolean {
         val gap = maxOf(a.startMs, b.startMs) - minOf(a.endMs, b.endMs)
         return gap <= 1000L
+    }
+
+    /**
+     * True when the two tracklets meet in roughly the same part of the frame at roughly
+     * the same scale, i.e. one plausibly continues the other.
+     */
+    private fun continuesSpatially(a: Tracklet, b: Tracklet): Boolean {
+        val endOfA = (if (a.endMs <= b.startMs) a.detections.last() else a.detections.first())
+            .boundingBox ?: return false
+        val startOfB = (if (a.endMs <= b.startMs) b.detections.first() else b.detections.last())
+            .boundingBox ?: return false
+
+        val span = max(endOfA.width(), startOfB.width()).toFloat().coerceAtLeast(1f)
+        val drift = hypot(
+            endOfA.exactCenterX() - startOfB.exactCenterX(),
+            endOfA.exactCenterY() - startOfB.exactCenterY()
+        ) / span
+        val scaleRatio = min(endOfA.width(), startOfB.width()).toFloat() /
+            max(endOfA.width(), startOfB.width()).coerceAtLeast(1)
+
+        return drift <= 1.5f && scaleRatio >= 0.5f
     }
 
     /**

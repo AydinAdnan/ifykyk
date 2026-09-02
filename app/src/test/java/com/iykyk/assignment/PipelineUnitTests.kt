@@ -271,6 +271,63 @@ class PipelineUnitTests {
         )
     }
 
+    @Test
+    fun testClustering_lowQualityTrackIsNotAbsorbedIntoAWellFilmedPerson() {
+        // A person seen only in blurred frames has a noisy centroid. Merging them on the
+        // same evidence as a clean track is how they vanish from the results entirely.
+        val clusterer = AgglomerativeClusterer(mockEmbedder, similarityThreshold = 0.6f)
+
+        val sharpVec = l2Norm(FloatArray(512) { if (it == 5) 1f else 0f })
+        // Similar enough to clear a flat threshold, but not a confident match.
+        val blurryVec = l2Norm(FloatArray(512) { i ->
+            when (i) { 5 -> 0.62f; 400 -> 0.78f; else -> 0f }
+        })
+
+        val faces = listOf(
+            DetectedFace(
+                frameIndex = 0, timestampMs = 0L, embedding = sharpVec,
+                sharpnessScore = 900f, headEulerY = 0f
+            ),
+            DetectedFace(
+                frameIndex = 1, timestampMs = 400L, embedding = sharpVec,
+                sharpnessScore = 900f, headEulerY = 0f
+            ),
+            DetectedFace(
+                frameIndex = 4, timestampMs = 4000L, embedding = blurryVec,
+                sharpnessScore = 2f, headEulerY = 40f
+            )
+        )
+
+        val clusters = clusterer.clusterFaces(faces)
+        assertEquals("the blurred person must survive as their own cluster", 2, clusters.size)
+    }
+
+    @Test
+    fun testClustering_unidentifiableTrackIsNotMergedOnTimingAlone() {
+        val clusterer = AgglomerativeClusterer(mockEmbedder, similarityThreshold = 0.6f)
+        val vec = l2Norm(FloatArray(512) { if (it == 9) 1f else 0f })
+
+        // The second face carries no embedding at all and sits on the far side of the
+        // frame. Appearing moments later is not evidence that it is the same person.
+        val faces = listOf(
+            DetectedFace(
+                frameIndex = 0, timestampMs = 0L, embedding = vec,
+                boundingBox = null, sharpnessScore = 500f
+            ),
+            DetectedFace(
+                frameIndex = 3, timestampMs = 900L, embedding = FloatArray(0),
+                boundingBox = null, sharpnessScore = 500f
+            )
+        )
+
+        val clusters = clusterer.clusterFaces(faces)
+        assertEquals(
+            "an unidentifiable track needs spatial continuity, not just timing",
+            2,
+            clusters.size
+        )
+    }
+
     private fun createDummyFace(timestampMs: Long, trackingId: Int): DetectedFace {
         return DetectedFace(
             frameIndex = 0,
