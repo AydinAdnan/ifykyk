@@ -388,7 +388,7 @@ class CollageCanvasRenderer(private val context: Context) {
      * Saves bitmap to MediaStore Pictures gallery.
      */
     suspend fun saveToGallery(bitmap: Bitmap, title: String = "unique_person_collage"): Uri? = withContext(Dispatchers.IO) {
-        val filename = "_.png"
+        val filename = "${title}_${System.currentTimeMillis()}.png"
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, filename)
             put(MediaStore.Images.Media.MIME_TYPE, "image/png")
@@ -419,12 +419,12 @@ class CollageCanvasRenderer(private val context: Context) {
      */
     fun createShareIntent(bitmap: Bitmap): Intent {
         val cachePath = File(context.cacheDir, "images").apply { mkdirs() }
-        val file = File(cachePath, "collage_.png")
-        val stream = FileOutputStream(file)
-        bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
-        stream.close()
+        val file = File(cachePath, "collage_${System.currentTimeMillis()}.png")
+        FileOutputStream(file).use { stream ->
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+        }
 
-        val contentUri = FileProvider.getUriForFile(context, ".fileprovider", file)
+        val contentUri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
 
         return Intent(Intent.ACTION_SEND).apply {
             type = "image/png"
