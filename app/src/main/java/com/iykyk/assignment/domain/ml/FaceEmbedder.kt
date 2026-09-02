@@ -86,7 +86,19 @@ class TFLiteFaceEmbedder(private val context: Context? = null) : FaceEmbedder {
                 afd.startOffset,
                 afd.declaredLength
             )
-            val interp = Interpreter(modelBuffer, Interpreter.Options().apply { setNumThreads(4) })
+            // XNNPACK is the difference between a usable and an unusable latency for a
+            // float Inception-ResNet-V1 on CPU. It is the default for float models on
+            // recent TFLite, but is asked for explicitly so a runtime change cannot
+            // silently halve throughput.
+            val options = Interpreter.Options().apply {
+                setNumThreads(Runtime.getRuntime().availableProcessors().coerceIn(2, 4))
+                try {
+                    setUseXNNPACK(true)
+                } catch (e: Throwable) {
+                    android.util.Log.w(TAG, "XNNPACK unavailable; running the default CPU kernels")
+                }
+            }
+            val interp = Interpreter(modelBuffer, options)
 
             val inputShape = interp.getInputTensor(0).shape()
             if (inputShape.size >= 3) inputSize = inputShape[1]
