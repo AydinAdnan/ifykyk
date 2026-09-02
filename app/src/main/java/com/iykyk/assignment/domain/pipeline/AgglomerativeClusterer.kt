@@ -36,12 +36,16 @@ class AgglomerativeClusterer(
     fun clusterTracklets(tracklets: List<Tracklet>): Map<Int, List<Tracklet>> {
         if (tracklets.isEmpty()) return emptyMap()
 
-        val embeddings = tracklets.associateWith { trackletEmbedding(it, minRecognitionQuality) }
+        // Keyed by tracklet id, not by the tracklet itself: Tracklet is a data class
+        // holding every detection, so hashing one walks the whole list on each lookup.
+        val embeddings: Map<Int, FloatArray> =
+            tracklets.associate { it.id to trackletEmbedding(it, minRecognitionQuality) }
 
         // Tracklets with no usable face at all cannot be identified; they are still real
         // appearances, so they are attached to their best match later rather than dropped.
-        val identifiable = tracklets.filter { embeddings.getValue(it).isNotEmpty() }
-        val unidentifiable = tracklets - identifiable.toSet()
+        val identifiable = tracklets.filter { embeddings.getValue(it.id).isNotEmpty() }
+        val identifiableIds = identifiable.map { it.id }.toHashSet()
+        val unidentifiable = tracklets.filter { it.id !in identifiableIds }
 
         if (identifiable.isEmpty()) {
             return tracklets.mapIndexed { i, t -> (i + 1) to listOf(t) }.toMap()
@@ -108,15 +112,15 @@ class AgglomerativeClusterer(
     private fun averageLinkage(
         a: List<Tracklet>,
         b: List<Tracklet>,
-        embeddings: Map<Tracklet, FloatArray>
+        embeddings: Map<Int, FloatArray>
     ): Float {
         var sum = 0f
         var count = 0
         for (ta in a) {
-            val ea = embeddings.getValue(ta)
+            val ea = embeddings.getValue(ta.id)
             if (ea.isEmpty()) continue
             for (tb in b) {
-                val eb = embeddings.getValue(tb)
+                val eb = embeddings.getValue(tb.id)
                 if (eb.isEmpty()) continue
                 sum += embedder.cosineSimilarity(ea, eb)
                 count++
