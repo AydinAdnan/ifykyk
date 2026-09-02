@@ -30,6 +30,7 @@ class MainActivity : ComponentActivity() {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     AnimatedContent(
                         targetState = screenState,
+                        contentKey = { it::class },
                         transitionSpec = {
                             fadeIn(animationSpec = tween(300)) + slideInVertically(
                                 animationSpec = tween(350),

@@ -2,6 +2,7 @@
 
 import android.graphics.Bitmap
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -16,8 +17,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -32,8 +36,43 @@ fun ProcessingScreen(
 ) {
     val animatedPercent by animateFloatAsState(
         targetValue = progress.progressPercent.toFloat(),
-        animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing),
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessLow
+        ),
         label = "progressAnimation"
+    )
+
+    // Infinite living animations for buttery smooth continuous feedback
+    val infiniteTransition = rememberInfiniteTransition(label = "infiniteLivingLoop")
+
+    val cardFloatOffset by infiniteTransition.animateFloat(
+        initialValue = -5f,
+        targetValue = 5f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "cardFloat"
+    )
+
+    val ringRotation by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(4000, easing = LinearEasing)
+        ),
+        label = "ringRotate"
+    )
+
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 0.96f,
+        targetValue = 1.04f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulseScale"
     )
 
     Column(
@@ -46,7 +85,7 @@ fun ProcessingScreen(
     ) {
         Spacer(modifier = Modifier.height(36.dp))
 
-        // 1. Top Badge: "PROCESSING..." in Cherry Bomb One font
+        // 1. Top Badge: "PROCESSING..." in Cherry Bomb One
         Box(
             modifier = Modifier.wrapContentSize(),
             contentAlignment = Alignment.Center
@@ -77,8 +116,12 @@ fun ProcessingScreen(
 
         Spacer(modifier = Modifier.height(32.dp))
 
-        // 2. Center Face Avatar Card with Border & Status
-        Box(modifier = Modifier.fillMaxWidth()) {
+        // 2. Center Face Avatar Card with Floating Physics & Continuous Orbital Ring
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset(y = cardFloatOffset.dp)
+        ) {
             BrutalCard(
                 backgroundColor = CardWhite,
                 rotation = -0.5f,
@@ -90,34 +133,56 @@ fun ProcessingScreen(
                 ) {
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // Circular Face Preview
+                    // Circular Face Preview with Continuous Rotating Orbital Ring
                     Box(
-                        modifier = Modifier
-                            .size(130.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFFEDE9FE))
-                            .border(3.dp, BrutalBorder, CircleShape),
+                        modifier = Modifier.size(146.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        val faceBmp = progress.currentFaceBitmap
-                        if (faceBmp != null) {
-                            Image(
-                                bitmap = faceBmp.asImageBitmap(),
-                                contentDescription = "Active Face",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
+                        // Outer animated rotating dashed ring
+                        Canvas(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .rotate(ringRotation)
+                        ) {
+                            drawCircle(
+                                color = Color(0xFF8B5CF6),
+                                radius = size.minDimension / 2f - 4f,
+                                style = Stroke(
+                                    width = 4f,
+                                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(24f, 16f), 0f)
+                                )
                             )
-                        } else {
-                            Text(
-                                text = "\uD83D\uDC64",
-                                fontSize = 48.sp
-                            )
+                        }
+
+                        // Inner Face Avatar Crop
+                        Box(
+                            modifier = Modifier
+                                .size(118.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFEDE9FE))
+                                .border(2.5.dp, BrutalBorder, CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            val faceBmp = progress.currentFaceBitmap
+                            if (faceBmp != null) {
+                                Image(
+                                    bitmap = faceBmp.asImageBitmap(),
+                                    contentDescription = "Active Face",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                Text(
+                                    text = "\uD83D\uDC64",
+                                    fontSize = 44.sp
+                                )
+                            }
                         }
                     }
 
                     Spacer(modifier = Modifier.height(18.dp))
 
-                    // Current Stage Pill
+                    // Current Stage Pill with gentle pulsing scale
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
@@ -173,14 +238,14 @@ fun ProcessingScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "OVERALL PROGRESS",
+                            text = "ANALYSIS PROGRESS",
                             fontSize = 13.sp,
                             fontFamily = GoogleSansFamily,
                             color = TextPrimary
                         )
                         Text(
                             text = "%",
-                            fontSize = 20.sp,
+                            fontSize = 22.sp,
                             fontFamily = CherryBombOneFamily,
                             color = TextPrimary
                         )

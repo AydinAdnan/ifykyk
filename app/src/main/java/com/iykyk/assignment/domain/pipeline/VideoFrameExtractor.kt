@@ -32,22 +32,22 @@ class VideoFrameExtractor(private val context: Context) {
             val durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
             val durationMs = durationStr?.toLongOrNull() ?: 10000L
 
-            val intervalMs = (1000f / targetFps).toLong().coerceAtLeast(250L)
+            val targetInterval = (1000f / targetFps).toLong().coerceAtLeast(300L)
+            // Limit to max 45 frames for snappy performance while covering full video
+            val intervalMs = maxOf(targetInterval, (durationMs / 45L))
             val totalExpectedFrames = max(1, (durationMs / intervalMs).toInt())
 
             var currentTimestamp = 0L
             var frameIndex = 0
 
             while (currentTimestamp < durationMs) {
-                // Seek to microsecond timestamp with OPTION_CLOSEST for exact frame accuracy
                 val frameBitmap = retriever.getFrameAtTime(
                     currentTimestamp * 1000L,
-                    MediaMetadataRetriever.OPTION_CLOSEST
-                )
+                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC
+                ) ?: retriever.getFrameAtTime(currentTimestamp * 1000L)
 
                 if (frameBitmap != null) {
-                    // Downscale for detection performance if needed (max dimension 960px)
-                    val scaled = scaleDownIfLarge(frameBitmap, maxDim = 960)
+                    val scaled = scaleDownIfLarge(frameBitmap, maxDim = 720)
                     frames.add(
                         ExtractedFrame(
                             index = frameIndex,
