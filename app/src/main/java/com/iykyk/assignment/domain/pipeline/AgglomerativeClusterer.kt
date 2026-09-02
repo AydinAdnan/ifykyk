@@ -9,36 +9,34 @@ import kotlin.math.min
 /**
  * Groups tracklets into people.
  *
- * Two changes matter relative to clustering raw detections. Identity decisions are made on
- * quality-weighted tracklet centroids rather than on single frames, so one blurred or
- * half-turned face can no longer split a person or merge two. And the "two faces visible
- * at once cannot be the same person" rule is enforced as a hard cannot-link constraint
- * that is inherited through merges: previously it was only checked between the two
- * clusters being merged, so A could merge with B and then the combined cluster could merge
- * with C even when C co-occurred with A.
+ * Identity is decided on quality-weighted tracklet centroids rather than single frames, so
+ * one blurred or half-turned face cannot split a person or merge two. Faces visible in the
+ * same frame are a hard cannot-link constraint, enforced across whole groups so it survives
+ * every merge.
+ *
+ * The threshold at which two groups become one person is calibrated per video rather than
+ * hardcoded - see [ThresholdCalibrator]. A constant cannot serve here: it has to separate
+ * embeddings from an int8-quantised export whose noise level no published figure describes,
+ * and the same constant that keeps four people apart in one clip splits one person four
+ * ways in the next.
  */
 class AgglomerativeClusterer(
     private val embedder: FaceEmbedder,
     /**
-     * Cosine similarity above which two groups of tracklets are the same person.
-     *
-     * Calibrated for L2-normalised FaceNet embeddings produced with correct prewhitening;
-     * same-person pairs typically land above 0.6 and different-person pairs below 0.35.
-     * The old 0.46 / 0.52 pair was compensating for a broken normalisation that pushed
-     * every face toward the middle of the space.
+     * Threshold used when the footage yields too little evidence to calibrate, typically
+     * because two people are never on screen at the same time.
      */
-    private val similarityThreshold: Float = 0.55f,
+    private val similarityThreshold: Float = ThresholdCalibrator.DEFAULT_THRESHOLD,
     /** Minimum recognitionQuality for a detection to contribute to identity. */
     private val minRecognitionQuality: Float = 0.22f,
     /**
      * Extra similarity demanded before absorbing a low-confidence track into a person.
      *
-     * A track made only of blurred or half-turned faces has a noisy centroid that can sit
-     * closer to a stranger than to itself. Merging it on the same evidence as a clean
-     * track makes people vanish: whoever only ever appears in the shaky part of the clip
-     * gets quietly folded into someone who was well filmed.
+     * Kept small. A track of only blurred faces does have a noisier centroid, but the
+     * calibrated threshold already reflects the noise level of this footage, so a large
+     * penalty here just reintroduces splitting.
      */
-    private val lowConfidenceMargin: Float = 0.08f
+    private val lowConfidenceMargin: Float = 0.03f
 ) {
 
     /**
@@ -48,22 +46,20 @@ class AgglomerativeClusterer(
     fun clusterTracklets(
         tracklets: List<Tracklet>,
         /**
-         * Identity vector per tracklet id, normally supplied by TrackletEmbedder so the
-         * model runs a few times per track rather than once per detection. Falls back to
+         * Identity per tracklet id, normally supplied by TrackletEmbedder so the model
+         * runs a few times per track rather than once per detection. Falls back to
          * averaging embeddings already stored on the detections.
          */
-        precomputed: Map<Int, FloatArray>? = null
+        precomputed: Map<Int, TrackletIdentity>? = null
     ): Map<Int, List<Tracklet>> {
         if (tracklets.isEmpty()) return emptyMap()
 
         // Keyed by tracklet id, not by the tracklet itself: Tracklet is a data class
         // holding every detection, so hashing one walks the whole list on each lookup.
-        val embeddings: Map<Int, FloatArray> = precomputed
-            ?: tracklets.associate { it.id to trackletEmbedding(it, minRecognitionQuality) }
+        val identities: Map<Int, TrackletIdentity> = precomputed
+            ?: tracklets.associate { it.id to identityFromDetections(it) }
 
-        // Tracklets with no usable face at all cannot be identified; they are still real
-        // appearances, so they are attached to their best match later rather than dropped.
-        val identifiable = tracklets.filter { embeddings.getValue(it.id).isNotEmpty() }
+        val identifiable = tracklets.filter { identities.getValue(it.id).isUsable }
         val identifiableIds = identifiable.map { it.id }.toHashSet()
         val unidentifiable = tracklets.filter { it.id !in identifiableIds }
 
@@ -71,6 +67,7 @@ class AgglomerativeClusterer(
             return tracklets.mapIndexed { i, t -> (i + 1) to listOf(t) }.toMap()
         }
 
+        val threshold = calibrateThreshold(identifiable, identities)
         var groups = identifiable.map { mutableListOf(it) }.toMutableList()
 
         while (groups.size > 1) {
@@ -82,7 +79,7 @@ class AgglomerativeClusterer(
                 for (j in i + 1 until groups.size) {
                     if (coOccur(groups[i], groups[j])) continue
 
-                    val sim = averageLinkage(groups[i], groups[j], embeddings)
+                    val sim = averageLinkage(groups[i], groups[j], identities)
                     if (sim > bestSim) {
                         bestSim = sim
                         mergeI = i
@@ -91,7 +88,9 @@ class AgglomerativeClusterer(
                 }
             }
 
-            if (mergeI < 0 || bestSim < requiredSimilarity(groups[mergeI], groups[mergeJ])) break
+            if (mergeI < 0) break
+            val confidence = groupConfidence(groups[mergeI], groups[mergeJ], identities)
+            if (bestSim < threshold + (1f - confidence) * lowConfidenceMargin) break
 
             groups[mergeI].addAll(groups[mergeJ])
             groups.removeAt(mergeJ)
@@ -100,8 +99,7 @@ class AgglomerativeClusterer(
         // Tracklets with no usable face are attached only where the geometry genuinely
         // implies continuity: the same person, seen moments earlier or later, in nearly
         // the same place. Time proximity on its own was enough before, which meant a
-        // stranger who happened to appear right after someone else was silently merged
-        // into them and disappeared from the results.
+        // stranger who happened to appear right after someone else was merged into them.
         for (orphan in unidentifiable) {
             val host = groups.firstOrNull { group ->
                 !coOccur(group, listOf(orphan)) &&
@@ -122,22 +120,63 @@ class AgglomerativeClusterer(
     }
 
     /**
-     * Similarity two groups must reach to merge, raised when either side's identity rests
-     * on poor-quality faces.
+     * Places the merge threshold using the labels the video gives away for free: tracklets
+     * sharing a frame are different people, and faces inside one tracklet are the same
+     * person.
      */
-    private fun requiredSimilarity(a: List<Tracklet>, b: List<Tracklet>): Float {
-        val confidence = min(groupConfidence(a), groupConfidence(b))
-        return similarityThreshold + (1f - confidence) * lowConfidenceMargin
+    private fun calibrateThreshold(
+        tracklets: List<Tracklet>,
+        identities: Map<Int, TrackletIdentity>
+    ): Float {
+        val impostor = mutableListOf<Float>()
+        for (i in tracklets.indices) {
+            val a = identities.getValue(tracklets[i].id)
+            for (j in i + 1 until tracklets.size) {
+                if (!coOccur(listOf(tracklets[i]), listOf(tracklets[j]))) continue
+                val b = identities.getValue(tracklets[j].id)
+                impostor.add(embedder.cosineSimilarity(a.centroid, b.centroid))
+            }
+        }
+
+        val genuine = mutableListOf<Float>()
+        for (tracklet in tracklets) {
+            val members = identities.getValue(tracklet.id).members
+            for (i in members.indices) {
+                for (j in i + 1 until members.size) {
+                    genuine.add(embedder.cosineSimilarity(members[i], members[j]))
+                }
+            }
+        }
+
+        return ThresholdCalibrator.calibrate(genuine, impostor, similarityThreshold)
     }
 
-    /** How much the faces backing a group's identity can be trusted, in 0..1. */
-    private fun groupConfidence(group: List<Tracklet>): Float {
-        val best = group.flatMap { it.detections }
-            .map { it.recognitionQuality }
-            .sortedDescending()
-            .take(3)
-        return if (best.isEmpty()) 0f else best.average().toFloat().coerceIn(0f, 1f)
+    /** Builds an identity from embeddings already stored on the detections. */
+    private fun identityFromDetections(tracklet: Tracklet): TrackletIdentity {
+        val usable = tracklet.usableDetections(minRecognitionQuality).ifEmpty {
+            tracklet.detections.filter { it.embedding.isNotEmpty() }
+        }
+        if (usable.isEmpty()) return TrackletIdentity(FloatArray(0), emptyList(), 0f)
+
+        return TrackletIdentity(
+            centroid = trackletEmbedding(tracklet, minRecognitionQuality),
+            members = usable.map { it.embedding },
+            confidence = usable.map { it.recognitionQuality }.average().toFloat().coerceIn(0f, 1f)
+        )
     }
+
+    /**
+     * Confidence of the weaker side, since a merge is only as trustworthy as the poorer of
+     * the two identities. Taking the stronger side would let a well-filmed person vouch for
+     * a blurred track being folded into them, which is the merge the margin exists to
+     * question.
+     */
+    private fun groupConfidence(
+        a: List<Tracklet>,
+        b: List<Tracklet>,
+        identities: Map<Int, TrackletIdentity>
+    ): Float =
+        (a + b).map { identities.getValue(it.id).confidence }.minOrNull()?.coerceIn(0f, 1f) ?: 0f
 
     /**
      * True when any tracklet of one group shares a frame with any tracklet of the other.
@@ -153,15 +192,15 @@ class AgglomerativeClusterer(
     private fun averageLinkage(
         a: List<Tracklet>,
         b: List<Tracklet>,
-        embeddings: Map<Int, FloatArray>
+        identities: Map<Int, TrackletIdentity>
     ): Float {
         var sum = 0f
         var count = 0
         for (ta in a) {
-            val ea = embeddings.getValue(ta.id)
+            val ea = identities.getValue(ta.id).centroid
             if (ea.isEmpty()) continue
             for (tb in b) {
-                val eb = embeddings.getValue(tb.id)
+                val eb = identities.getValue(tb.id).centroid
                 if (eb.isEmpty()) continue
                 sum += embedder.cosineSimilarity(ea, eb)
                 count++

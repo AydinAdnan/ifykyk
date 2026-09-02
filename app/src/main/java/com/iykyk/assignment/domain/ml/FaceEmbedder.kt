@@ -122,14 +122,24 @@ class TFLiteFaceEmbedder(private val context: Context? = null) : FaceEmbedder {
         }
     }
 
+    /**
+     * Returns the identity vector for a face, or an empty array when one cannot be
+     * produced.
+     *
+     * Empty rather than zeros or a substitute descriptor. A zero vector scores zero
+     * similarity against everything, which silently forces a person to split off; and
+     * falling back to the handcrafted descriptor while other faces get model embeddings
+     * mixes two incompatible spaces of different dimensionality. Callers treat an empty
+     * result as "unknown" and fall back on geometry, which is honest.
+     */
     override fun getEmbedding(faceBitmap: Bitmap?): FloatArray {
-        if (faceBitmap == null) return FloatArray(outputDim)
+        if (faceBitmap == null) return FloatArray(0)
         val interp = interpreter ?: return computeDeterministicFeatureVector(faceBitmap)
 
         // Flip averaging: summing the embedding of the crop and of its mirror cancels a
         // good deal of pose and lighting noise, which tightens same-person similarity.
         val direct = runInference(interp, faceBitmap, mirrored = false)
-            ?: return computeDeterministicFeatureVector(faceBitmap)
+            ?: return FloatArray(0)
         val flipped = runInference(interp, faceBitmap, mirrored = true)
             ?: return l2Normalize(direct)
 
@@ -276,10 +286,12 @@ class TFLiteFaceEmbedder(private val context: Context? = null) : FaceEmbedder {
     }
 
     override fun cosineSimilarity(u: FloatArray, v: FloatArray): Float {
-        if (u.isEmpty() || v.isEmpty()) return 0f
+        // Vectors of different lengths come from different descriptors and are not
+        // comparable. Comparing their common prefix produced a number that looked like a
+        // similarity but meant nothing, which is worse than refusing to answer.
+        if (u.isEmpty() || v.isEmpty() || u.size != v.size) return 0f
         var dot = 0f
-        val len = Math.min(u.size, v.size)
-        for (i in 0 until len) dot += u[i] * v[i]
+        for (i in u.indices) dot += u[i] * v[i]
         return dot.coerceIn(-1f, 1f)
     }
 

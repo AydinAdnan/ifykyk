@@ -7,6 +7,24 @@ import kotlin.math.min
 import kotlin.math.sqrt
 
 /**
+ * Identity of one tracklet.
+ *
+ * @param centroid quality-weighted mean of [members], L2 normalised
+ * @param members the individual face embeddings that produced it. Kept because faces
+ *   inside a tracklet are the same person by construction, so the similarities between
+ *   them are free samples of the genuine distribution, which ThresholdCalibrator uses to
+ *   place the merge threshold.
+ * @param confidence how much the faces backing this identity can be trusted, in 0..1
+ */
+data class TrackletIdentity(
+    val centroid: FloatArray,
+    val members: List<FloatArray>,
+    val confidence: Float
+) {
+    val isUsable: Boolean get() = centroid.isNotEmpty()
+}
+
+/**
  * Computes one identity vector per tracklet.
  *
  * Embedding every detection is the single most expensive thing the pipeline did, and
@@ -45,52 +63,67 @@ class TrackletEmbedder(
         tracklets.sumOf { selectFaces(it).size }
 
     /**
-     * Returns the identity vector of each tracklet, keyed by tracklet id. Tracklets whose
-     * faces are all unusable map to an empty array.
+     * Returns the identity of each tracklet, keyed by tracklet id. Tracklets whose faces
+     * are all unusable map to an identity with an empty centroid.
      */
     suspend fun embedAll(
         tracklets: List<Tracklet>,
         onProgress: suspend (done: Int, total: Int) -> Unit = { _, _ -> }
-    ): Map<Int, FloatArray> {
+    ): Map<Int, TrackletIdentity> {
         val total = plannedInferences(tracklets)
         var done = 0
-        val result = HashMap<Int, FloatArray>(tracklets.size)
+        val result = HashMap<Int, TrackletIdentity>(tracklets.size)
 
         for (tracklet in tracklets) {
             val faces = selectFaces(tracklet)
             if (faces.isEmpty()) {
-                result[tracklet.id] = FloatArray(0)
+                result[tracklet.id] = TrackletIdentity(FloatArray(0), emptyList(), 0f)
                 continue
             }
 
-            val dim = embedder.getEmbedding(faces.first().alignedCropBitmap)
-            done++
-            onProgress(done, total)
+            val members = mutableListOf<FloatArray>()
+            val weights = mutableListOf<Float>()
 
-            val accumulator = FloatArray(dim.size)
-            var weightSum = 0f
-
-            fun accumulate(vector: FloatArray, weight: Float) {
-                for (i in 0 until min(accumulator.size, vector.size)) {
-                    accumulator[i] += vector[i] * weight
-                }
-                weightSum += weight
-            }
-            accumulate(dim, max(0.05f, faces.first().recognitionQuality))
-
-            for (face in faces.drop(1)) {
-                accumulate(
-                    embedder.getEmbedding(face.alignedCropBitmap),
-                    max(0.05f, face.recognitionQuality)
-                )
+            for (face in faces) {
+                val vector = embedder.getEmbedding(face.alignedCropBitmap)
                 done++
                 onProgress(done, total)
+
+                if (vector.isNotEmpty()) {
+                    members.add(vector)
+                    weights.add(max(0.05f, face.recognitionQuality))
+                }
             }
 
-            result[tracklet.id] = if (weightSum > 0f) l2Normalize(accumulator) else FloatArray(0)
+            result[tracklet.id] = buildIdentity(members, weights, faces)
         }
 
         return result
+    }
+
+    private fun buildIdentity(
+        members: List<FloatArray>,
+        weights: List<Float>,
+        faces: List<DetectedFace>
+    ): TrackletIdentity {
+        if (members.isEmpty()) return TrackletIdentity(FloatArray(0), emptyList(), 0f)
+
+        val accumulator = FloatArray(members.first().size)
+        var weightSum = 0f
+        for ((i, vector) in members.withIndex()) {
+            val weight = weights[i]
+            for (k in 0 until min(accumulator.size, vector.size)) {
+                accumulator[k] += vector[k] * weight
+            }
+            weightSum += weight
+        }
+
+        val confidence = faces.map { it.recognitionQuality }.average().toFloat().coerceIn(0f, 1f)
+        return TrackletIdentity(
+            centroid = if (weightSum > 0f) l2Normalize(accumulator) else FloatArray(0),
+            members = members,
+            confidence = confidence
+        )
     }
 
     private fun l2Normalize(vector: FloatArray): FloatArray {
