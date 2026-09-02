@@ -12,6 +12,9 @@ import kotlin.math.min
 
 object FaceAlignmentHelper {
 
+    /** Fixed patch size used for scale-comparable blur scoring. */
+    private const val SHARPNESS_PATCH = 128
+
     /**
      * Produces the aligned square crop fed to the recognition model.
      *
@@ -138,34 +141,65 @@ object FaceAlignmentHelper {
     }
 
     /**
-     * Variance of Laplacian / edge gradient to score face sharpness.
+     * Blur score for a face, as the variance of the Laplacian over a fixed-size
+     * luminance patch. Higher is sharper.
+     *
+     * Two details matter. The patch is always resampled to [SHARPNESS_PATCH] so scores
+     * are comparable between a large close-up and a small background face, and a face
+     * whose native resolution is below the patch size scores low - which is what we want,
+     * because it genuinely has no detail to show in a collage tile. And it reads real
+     * luminance: sampling `pixel and 0xFF` measures the blue channel alone, which tracks
+     * focus only incidentally and collapses on warm or saturated footage.
      */
-    fun computeSharpness(crop: Bitmap): Float {
-        val w = crop.width
-        val h = crop.height
+    fun computeSharpness(frame: Bitmap, region: Rect? = null): Float {
+        val src = region ?: Rect(0, 0, frame.width, frame.height)
+        val x = src.left.coerceIn(0, max(0, frame.width - 1))
+        val y = src.top.coerceIn(0, max(0, frame.height - 1))
+        val w = src.width().coerceAtMost(frame.width - x)
+        val h = src.height().coerceAtMost(frame.height - y)
         if (w < 4 || h < 4) return 0f
 
-        // Sample grayscale pixels
-        val pixels = IntArray(w * h)
-        crop.getPixels(pixels, 0, w, 0, 0, w, h)
+        val patch = copyRegionExact(frame, x, y, w, h, SHARPNESS_PATCH)
+        val size = SHARPNESS_PATCH
+        val pixels = IntArray(size * size)
+        patch.getPixels(pixels, 0, size, 0, 0, size, size)
+        patch.recycle()
 
-        var sumGrad = 0.0
+        val luma = FloatArray(size * size)
+        for (i in pixels.indices) {
+            val c = pixels[i]
+            luma[i] = 0.299f * ((c shr 16) and 0xFF) +
+                0.587f * ((c shr 8) and 0xFF) +
+                0.114f * (c and 0xFF)
+        }
+
+        var sum = 0.0
+        var sumSq = 0.0
         var count = 0
-
-        for (y in 1 until h - 1) {
-            for (x in 1 until w - 1) {
-                val center = (pixels[y * w + x] and 0xFF)
-                val left = (pixels[y * w + (x - 1)] and 0xFF)
-                val right = (pixels[y * w + (x + 1)] and 0xFF)
-                val top = (pixels[(y - 1) * w + x] and 0xFF)
-                val bottom = (pixels[(y + 1) * w + x] and 0xFF)
-
-                val lap = Math.abs(4 * center - left - right - top - bottom)
-                sumGrad += lap
+        for (yy in 1 until size - 1) {
+            for (xx in 1 until size - 1) {
+                val i = yy * size + xx
+                val lap = 4f * luma[i] - luma[i - 1] - luma[i + 1] - luma[i - size] - luma[i + size]
+                sum += lap
+                sumSq += (lap * lap).toDouble()
                 count++
             }
         }
+        if (count == 0) return 0f
 
-        return if (count > 0) (sumGrad / count).toFloat() else 0f
+        val mean = sum / count
+        return ((sumSq / count) - mean * mean).coerceAtLeast(0.0).toFloat()
+    }
+
+    /** Copies a region and resizes it to exactly [size] x [size]. */
+    private fun copyRegionExact(frame: Bitmap, x: Int, y: Int, w: Int, h: Int, size: Int): Bitmap {
+        val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        Canvas(out).drawBitmap(
+            frame,
+            Rect(x, y, x + w, y + h),
+            Rect(0, 0, size, size),
+            Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        )
+        return out
     }
 }

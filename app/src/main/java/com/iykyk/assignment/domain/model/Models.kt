@@ -49,25 +49,61 @@ data class DetectedFace(
         }
 
     /**
-     * Google Photos "Top Shot" / "Best Take" scoring algorithm:
-     * - Hard penalties for motion blur and closed eyes
-     * - Strong preference for solo, unoccluded, frontal, smiling portraits
+     * Blur score mapped into 0..1 so it can be mixed with the probability-valued
+     * attributes. sharpnessScore itself is an unbounded variance of Laplacian.
+     */
+    val sharpnessQuality: Float
+        get() = sharpnessScore / (sharpnessScore + SHARPNESS_MIDPOINT)
+
+    /** How front-facing the head is, from the yaw and roll Euler angles. */
+    val frontality: Float
+        get() = (1f - (Math.abs(headEulerY) / 50f + Math.abs(headEulerZ) / 35f)).coerceIn(0f, 1f)
+
+    /** Probability that the less-open of the two eyes is open. */
+    val eyesOpen: Float
+        get() = Math.min(leftEyeOpenProbability, rightEyeOpenProbability).coerceIn(0f, 1f)
+
+    /**
+     * Confidence that this crop is a usable face for recognition, independent of how
+     * pretty it is. Used to weight embeddings and to drop junk before clustering.
+     */
+    val recognitionQuality: Float
+        get() {
+            val sizeTerm = (faceWidthPx / 160f).coerceIn(0f, 1f)
+            return (0.45f * sharpnessQuality + 0.35f * frontality + 0.20f * sizeTerm)
+                .coerceIn(0f, 1f)
+        }
+
+    /**
+     * "Top Shot" style score for choosing which frame represents a person:
+     * favours frontal, crisp, eyes-open, pleasant, unclipped, solo portraits.
+     *
+     * Hard disqualifiers (clipped face, neighbours in the crop, too small) are applied as
+     * gates before scoring rather than as penalties here, so that a shot that fails them
+     * can never win merely by scoring well elsewhere.
      */
     val repScore: Float
         get() {
-            // Motion blur penalty: blurry faces should never be chosen
-            if (sharpnessScore < 50f) return 0.05f
-
-            val frontality = (1f - (Math.abs(headEulerY) / 50f + Math.abs(headEulerZ) / 35f)).coerceIn(0f, 1f)
-            val minEyeOpen = Math.min(leftEyeOpenProbability, rightEyeOpenProbability).coerceIn(0f, 1f)
-            val eyesOpenScore = if (minEyeOpen < 0.35f) minEyeOpen * 0.2f else minEyeOpen
+            val eyesTerm = if (eyesOpen < 0.35f) eyesOpen * 0.2f else eyesOpen
             val smile = smilingProbability.coerceIn(0f, 1f)
-            val sharpness = (sharpnessScore / 350f).coerceIn(0.1f, 1f)
-            val soloBonus = if (isSoloShot) 0.35f else 0.0f
-            val sizeBonus = ((boundingBox?.width() ?: 100) / 400f).coerceIn(0f, 0.25f)
+            val sizeTerm = (faceWidthPx / 320f).coerceIn(0f, 1f)
+            val soloBonus = if (isSoloShot) 0.15f else 0f
 
-            return (0.30f * frontality) + (0.25f * sharpness) + (0.20f * eyesOpenScore) + (0.15f * smile) + soloBonus + sizeBonus
+            return (0.28f * frontality) +
+                (0.26f * sharpnessQuality) +
+                (0.20f * eyesTerm) +
+                (0.12f * smile) +
+                (0.14f * sizeTerm) +
+                soloBonus
         }
+
+    companion object {
+        /**
+         * Laplacian variance at which sharpnessQuality reaches 0.5. Calibrated for the
+         * 128x128 luminance patch used by FaceAlignmentHelper.computeSharpness.
+         */
+        const val SHARPNESS_MIDPOINT = 150f
+    }
 }
 
 /**
