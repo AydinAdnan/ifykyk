@@ -44,6 +44,9 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
@@ -76,7 +79,6 @@ dependencies {
 
     // TensorFlow Lite for face embeddings
     implementation(libs.tensorflow.lite)
-    implementation(libs.tensorflow.lite.support)
 
     // Testing
     testImplementation(libs.junit)

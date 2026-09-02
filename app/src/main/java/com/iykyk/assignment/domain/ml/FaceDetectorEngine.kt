@@ -1,0 +1,94 @@
+﻿package com.iykyk.assignment.domain.ml
+
+import android.graphics.Bitmap
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.face.Face
+import com.google.mlkit.vision.face.FaceDetection
+import com.google.mlkit.vision.face.FaceDetectorOptions
+import com.google.mlkit.vision.face.FaceLandmark
+import com.iykyk.assignment.domain.model.DetectedFace
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+
+class FaceDetectorEngine {
+
+    private val detector by lazy {
+        val options = FaceDetectorOptions.Builder()
+            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
+            .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
+            .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
+            .enableTracking()
+            .setMinFaceSize(0.10f)
+            .build()
+        FaceDetection.getClient(options)
+    }
+
+    /**
+     * Detects faces in a bitmap frame and applies quality / junk gate filtering.
+     */
+    suspend fun detectFacesInFrame(
+        frameBitmap: Bitmap,
+        frameIndex: Int,
+        timestampMs: Long
+    ): List<DetectedFace> = suspendCancellableCoroutine { continuation ->
+        val inputImage = InputImage.fromBitmap(frameBitmap, 0)
+        detector.process(inputImage)
+            .addOnSuccessListener { mlkitFaces ->
+                val validFaces = mutableListOf<DetectedFace>()
+
+                for (face in mlkitFaces) {
+                    val box = face.boundingBox
+                    // Junk gate 1: ignore tiny face bounding boxes (<60px)
+                    if (box.width() < 60 || box.height() < 60) continue
+
+                    // Junk gate 2: ensure box overlaps reasonably with frame bounds
+                    if (box.right <= 0 || box.bottom <= 0 || box.left >= frameBitmap.width || box.top >= frameBitmap.height) continue
+
+                    // Extract landmarks
+                    val leftEye = face.getLandmark(FaceLandmark.LEFT_EYE)?.position
+                    val rightEye = face.getLandmark(FaceLandmark.RIGHT_EYE)?.position
+                    val nose = face.getLandmark(FaceLandmark.NOSE_BASE)?.position
+                    val mouthLeft = face.getLandmark(FaceLandmark.MOUTH_LEFT)?.position
+                    val mouthRight = face.getLandmark(FaceLandmark.MOUTH_RIGHT)?.position
+
+                    // Crops
+                    val aligned112 = FaceAlignmentHelper.alignFace112(frameBitmap, box, leftEye, rightEye)
+                    val generousCrop = FaceAlignmentHelper.cropGenerousFace(frameBitmap, box)
+
+                    // Junk gate 3: Laplacian sharpness
+                    val sharpness = FaceAlignmentHelper.computeSharpness(aligned112)
+
+                    val detectedFace = DetectedFace(
+                        frameIndex = frameIndex,
+                        timestampMs = timestampMs,
+                        boundingBox = box,
+                        fullFrameBitmap = frameBitmap,
+                        alignedCropBitmap = aligned112,
+                        generousCropBitmap = generousCrop,
+                        trackingId = face.trackingId,
+                        leftEye = leftEye,
+                        rightEye = rightEye,
+                        nose = nose,
+                        mouthLeft = mouthLeft,
+                        mouthRight = mouthRight,
+                        headEulerY = face.headEulerAngleY,
+                        headEulerZ = face.headEulerAngleZ,
+                        smilingProbability = face.smilingProbability ?: 0f,
+                        leftEyeOpenProbability = face.leftEyeOpenProbability ?: 0.5f,
+                        rightEyeOpenProbability = face.rightEyeOpenProbability ?: 0.5f,
+                        sharpnessScore = sharpness
+                    )
+                    validFaces.add(detectedFace)
+                }
+
+                if (continuation.isActive) {
+                    continuation.resume(validFaces)
+                }
+            }
+            .addOnFailureListener {
+                if (continuation.isActive) {
+                    continuation.resume(emptyList())
+                }
+            }
+    }
+}

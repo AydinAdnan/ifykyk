@@ -1,11 +1,15 @@
-package com.iykyk.assignment.ui.components
+ï»¿package com.iykyk.assignment.ui.components
 
-import androidx.view.MotionEvent
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.classification.*
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,12 +33,16 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import com.iy­èk.assignment.ui.theme.BrutalBorder
+import com.iykyk.assignment.ui.theme.BrutalBorder
 import com.iykyk.assignment.ui.theme.BrutalShadow
 import com.iykyk.assignment.ui.theme.CardWhite
-import com.iy­èk.assignment.ui.theme.TextPrimary
+import com.iykyk.assignment.ui.theme.TextPrimary
 import kotlin.math.roundToInt
 
+/**
+ * Custom Compose Shape that carves out authentic perforated stamp notches (teeth)
+ * along all 4 edges of a rectangular card.
+ */
 class StampPerforatedShape(
     private val notchRadius: Float = 12f,
     private val notchSpacing: Float = 24f
@@ -45,11 +53,12 @@ class StampPerforatedShape(
         density: Density
     ): Outline {
         val baseRect = Path().apply {
-            addRect(Rect(0f, 0f,  size.width, size.height))
+            addRect(Rect(0f, 0f, size.width, size.height))
         }
         
         val cutouts = Path()
         
+        // Top & Bottom edges
         val hNotchCount = ((size.width - 2 * notchSpacing) / notchSpacing).roundToInt().coerceAtLeast(1)
         val hStep = size.width / (hNotchCount + 1)
         for (i in 1..hNotchCount) {
@@ -58,8 +67,9 @@ class StampPerforatedShape(
             cutouts.addOval(Rect(cx - notchRadius, size.height - notchRadius, cx + notchRadius, size.height + notchRadius))
         }
         
+        // Left & Right edges
         val vNotchCount = ((size.height - 2 * notchSpacing) / notchSpacing).roundToInt().coerceAtLeast(1)
-        val uStep = size.height / (vNotchCount + 1)
+        val vStep = size.height / (vNotchCount + 1)
         for (i in 1..vNotchCount) {
             val cy = i * vStep
             cutouts.addOval(Rect(-notchRadius, cy - notchRadius, notchRadius, cy + notchRadius))
@@ -72,6 +82,10 @@ class StampPerforatedShape(
     }
 }
 
+/**
+ * Postage Stamp Face Card Composable
+ * Displays a person's representative shot inside an authentic postage stamp frame.
+ */
 @Composable
 fun StampCard(
     imageModel: Any?,
@@ -102,6 +116,7 @@ fun StampCard(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.fillMaxWidth()
         ) {
+            // Photo Area inside stamp
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -122,7 +137,7 @@ fun StampCard(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
                             .padding(4.dp)
-                            .background(Color(0xFFFEE66D), RoundedCornerShape(4.dp))
+                            .background(Color(0xFFFFE66D), RoundedCornerShape(4.dp))
                             .border(1.dp, BrutalBorder, RoundedCornerShape(4.dp))
                             .padding(horizontal = 6.dp, vertical = 2.dp)
                     ) {
