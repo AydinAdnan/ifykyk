@@ -14,11 +14,11 @@ class FaceDetectorEngine {
 
     private val detector by lazy {
         val options = FaceDetectorOptions.Builder()
-            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
+            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
             .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
             .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
             .enableTracking()
-            .setMinFaceSize(0.10f)
+            .setMinFaceSize(0.12f)
             .build()
         FaceDetection.getClient(options)
     }

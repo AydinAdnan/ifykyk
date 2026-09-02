@@ -33,9 +33,9 @@ class VideoFrameExtractor(private val context: Context) {
             val durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
             val durationMs = durationStr?.toLongOrNull() ?: 10000L
 
-            val targetInterval = (1000f / targetFps).toLong().coerceAtLeast(300L)
-            // Limit to max 45 frames for snappy performance while covering full video
-            val intervalMs = maxOf(targetInterval, (durationMs / 45L))
+            val targetInterval = (1000f / targetFps).toLong().coerceAtLeast(350L)
+            // Limit to max 35 frames for instantaneous processing
+            val intervalMs = maxOf(targetInterval, (durationMs / 35L))
             val totalExpectedFrames = max(1, (durationMs / intervalMs).toInt())
 
             var currentTimestamp = 0L
@@ -45,7 +45,7 @@ class VideoFrameExtractor(private val context: Context) {
                 val timeUs = currentTimestamp * 1000L
                 val frameBitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
                     try {
-                        retriever.getScaledFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST, 720, 1280)
+                        retriever.getScaledFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST, 480, 854)
                     } catch (e: Exception) {
                         retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
                     }
@@ -54,7 +54,7 @@ class VideoFrameExtractor(private val context: Context) {
                 } ?: retriever.getFrameAtTime(timeUs)
 
                 if (frameBitmap != null) {
-                    val scaled = scaleDownIfLarge(frameBitmap, maxDim = 720)
+                    val scaled = scaleDownIfLarge(frameBitmap, maxDim = 480)
                     frames.add(
                         ExtractedFrame(
                             index = frameIndex,
