@@ -40,16 +40,10 @@ class VideoFrameExtractor(private val context: Context) {
         const val MAX_FRAME_EDGE = 720
 
         /** Upper bound on frames handed to detection, to keep latency bounded. */
-        const val MAX_FRAMES = 48
+        const val MAX_FRAMES = 72
 
         /** Lower bound, so very short clips still get dense sampling. */
         const val MIN_INTERVAL_MS = 300L
-
-        /**
-         * Below this many distinct frames, keyframe-only sampling is considered to have
-         * collapsed and the sweep is retried decoding to exact timestamps.
-         */
-        private const val MIN_DISTINCT_FRAMES = 8
     }
 
     /**
@@ -126,32 +120,19 @@ class VideoFrameExtractor(private val context: Context) {
      * Frames are handed to [onFrame] one at a time and recycled immediately afterwards:
      * materialising a whole sweep would hold hundreds of megabytes of bitmaps at once.
      *
-     * Sampling snaps to keyframes, which is far cheaper than decoding forward to exact
-     * timestamps. Because several requested times can then land on the same frame, and
-     * because a static shot repeats regardless, near-identical frames are dropped before
-     * they reach [onFrame] - detection on them costs full price and adds nothing. If a
-     * video has keyframes so sparse that this leaves too little to work with, the sweep is
-     * retried decoding to exact timestamps.
+     * Sampling decodes to exact timestamps. Snapping to keyframes is far cheaper, but it
+     * silently destroys temporal coverage: with keyframes a couple of seconds apart, most
+     * requested times return the frame their neighbours already returned, so the real
+     * sample count collapses to roughly the keyframe count. Anyone on screen briefly - or
+     * only during the camera movement between two settled shots - then falls into the gap
+     * and is never seen at all. Recall decides who appears in the collage, so it wins over
+     * decode cost here.
      */
     suspend fun forEachFrame(
         videoUri: Uri,
-        targetFps: Float = 2.0f,
+        targetFps: Float = 3.0f,
         onFrame: suspend (ExtractedFrame, Int) -> Unit
     ): SweepResult = withSession(videoUri) { session ->
-        val fast = sweep(session, targetFps, preferSync = true, onFrame = onFrame)
-        if (fast.framesDelivered >= MIN_DISTINCT_FRAMES || session.durationMs < 4_000L) {
-            fast
-        } else {
-            sweep(session, targetFps, preferSync = false, onFrame = onFrame)
-        }
-    } ?: SweepResult(0, 0L, 0L)
-
-    private suspend fun sweep(
-        session: Session,
-        targetFps: Float,
-        preferSync: Boolean,
-        onFrame: suspend (ExtractedFrame, Int) -> Unit
-    ): SweepResult {
         val durationMs = session.durationMs
         val targetInterval = (1000f / targetFps).toLong().coerceAtLeast(MIN_INTERVAL_MS)
         val intervalMs = max(targetInterval, durationMs / MAX_FRAMES)
@@ -160,46 +141,23 @@ class VideoFrameExtractor(private val context: Context) {
         var timestamp = 0L
         var delivered = 0
         var lastTimestamp = 0L
-        var previousHash: Long? = null
 
         while (timestamp < durationMs && delivered < MAX_FRAMES) {
-            val bitmap = session.decodeAt(timestamp, MAX_FRAME_EDGE, preferSync)
+            val bitmap = session.decodeAt(timestamp, MAX_FRAME_EDGE, preferSync = false)
             if (bitmap != null) {
-                val hash = averageHash(bitmap)
-                val duplicate = previousHash?.let { FrameHash.isDuplicate(it, hash) } == true
-
-                if (duplicate) {
-                    bitmap.recycle()
-                } else {
-                    previousHash = hash
-                    lastTimestamp = timestamp
-                    try {
-                        onFrame(ExtractedFrame(delivered, timestamp, bitmap), expectedTotal)
-                    } finally {
-                        if (!bitmap.isRecycled) bitmap.recycle()
-                    }
-                    delivered++
+                lastTimestamp = timestamp
+                try {
+                    onFrame(ExtractedFrame(delivered, timestamp, bitmap), expectedTotal)
+                } finally {
+                    if (!bitmap.isRecycled) bitmap.recycle()
                 }
+                delivered++
             }
             timestamp += intervalMs
         }
 
-        return SweepResult(delivered, durationMs, lastTimestamp)
-    }
-
-    /** Reduces a frame to an 8x8 luminance grid and hashes it. */
-    private fun averageHash(bitmap: Bitmap): Long {
-        val grid = Bitmap.createScaledBitmap(bitmap, 8, 8, true)
-        val pixels = IntArray(64)
-        grid.getPixels(pixels, 0, 8, 0, 0, 8, 8)
-        if (grid !== bitmap) grid.recycle()
-
-        val luma = FloatArray(64) { i ->
-            val c = pixels[i]
-            0.299f * ((c shr 16) and 0xFF) + 0.587f * ((c shr 8) and 0xFF) + 0.114f * (c and 0xFF)
-        }
-        return FrameHash.ofLumaGrid(luma)
-    }
+        SweepResult(delivered, durationMs, lastTimestamp)
+    } ?: SweepResult(0, 0L, 0L)
 }
 
 private fun scaleDownIfLarge(bitmap: Bitmap, maxDim: Int): Bitmap {
