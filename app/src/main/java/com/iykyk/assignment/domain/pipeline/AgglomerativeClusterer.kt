@@ -33,13 +33,21 @@ class AgglomerativeClusterer(
      * Clusters tracklets and returns, per person id (1-based, most prominent first), the
      * tracklets belonging to that person.
      */
-    fun clusterTracklets(tracklets: List<Tracklet>): Map<Int, List<Tracklet>> {
+    fun clusterTracklets(
+        tracklets: List<Tracklet>,
+        /**
+         * Identity vector per tracklet id, normally supplied by TrackletEmbedder so the
+         * model runs a few times per track rather than once per detection. Falls back to
+         * averaging embeddings already stored on the detections.
+         */
+        precomputed: Map<Int, FloatArray>? = null
+    ): Map<Int, List<Tracklet>> {
         if (tracklets.isEmpty()) return emptyMap()
 
         // Keyed by tracklet id, not by the tracklet itself: Tracklet is a data class
         // holding every detection, so hashing one walks the whole list on each lookup.
-        val embeddings: Map<Int, FloatArray> =
-            tracklets.associate { it.id to trackletEmbedding(it, minRecognitionQuality) }
+        val embeddings: Map<Int, FloatArray> = precomputed
+            ?: tracklets.associate { it.id to trackletEmbedding(it, minRecognitionQuality) }
 
         // Tracklets with no usable face at all cannot be identified; they are still real
         // appearances, so they are attached to their best match later rather than dropped.

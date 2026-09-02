@@ -45,7 +45,9 @@ class TrackletBuilder(
     /** Frames may be skipped this many times before a track is considered ended. */
     private val maxFrameGap: Int = 2,
     /** A geometric match is rejected if the faces look this dissimilar. */
-    private val minAppearanceSimilarity: Float = 0.25f
+    private val minAppearanceSimilarity: Float = 0.25f,
+    /** Smallest ratio between two face widths that can still be one track. */
+    private val minScaleRatio: Float = 0.55f
 ) {
 
     fun build(faces: List<DetectedFace>): List<Tracklet> {
@@ -111,6 +113,12 @@ class TrackletBuilder(
     private fun matchScore(previous: DetectedFace, candidate: DetectedFace): Float {
         val a = previous.boundingBox ?: return 0f
         val b = candidate.boundingBox ?: return 0f
+
+        // Faces at very different scales are at very different depths, so they are not
+        // the same track however much their boxes happen to overlap. This carries weight
+        // now that tracking runs before embedding and cannot fall back to appearance.
+        val scaleRatio = min(a.width(), b.width()).toFloat() / max(a.width(), b.width()).coerceAtLeast(1)
+        if (scaleRatio < minScaleRatio) return 0f
 
         val iou = iou(a.left, a.top, a.right, a.bottom, b.left, b.top, b.right, b.bottom)
         val sameTrackingId = previous.trackingId != null &&

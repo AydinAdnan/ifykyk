@@ -16,6 +16,7 @@ class VideoPipelineEngine(private val context: Context) {
     private val faceEmbedder = TFLiteFaceEmbedder(context)
     private val faceDetector = FaceDetectorEngine(alignedCropSize = faceEmbedder.inputSize)
     private val trackletBuilder = TrackletBuilder(faceEmbedder)
+    private val trackletEmbedder = TrackletEmbedder(faceEmbedder)
     private val clusterer = AgglomerativeClusterer(faceEmbedder)
     private val segmenter = AppearanceSegmenter(maxGapMs = 1200L, minSegmentDurationMs = 350L)
     private val cropRefiner = RepresentativeCropRefiner(frameExtractor, faceDetector)
@@ -106,22 +107,26 @@ class VideoPipelineEngine(private val context: Context) {
             return@channelFlow
         }
 
-        // 3. GENERATE EMBEDDINGS
+        // 3. TRACK, THEN EMBED
+        //
+        // Order matters for cost. Detections that sit in the same place in adjacent frames
+        // are the same person by geometry alone, so grouping first means the recognition
+        // model runs a few times per track instead of once per detection.
+        val tracklets = trackletBuilder.build(allDetectedFaces)
+
         send(
             PipelineProgress(
                 currentStep = PipelineStep.GENERATE_EMBEDDINGS,
                 progressPercent = 50,
                 currentFaceBitmap = previewBitmap,
-                statusMessage = "Extracting face feature embeddings...",
+                statusMessage = "Identifying ${tracklets.size} tracked appearances...",
                 completedSteps = completedSteps
             )
         )
 
         var lastEmbedPct = 50
-        val facesWithEmbeddings = allDetectedFaces.mapIndexed { idx, face ->
-            val embedded = face.copy(embedding = faceEmbedder.getEmbedding(face.alignedCropBitmap))
-
-            val pct = 50 + ((idx + 1) * 18 / allDetectedFaces.size)
+        val trackletEmbeddings = trackletEmbedder.embedAll(tracklets) { done, total ->
+            val pct = 50 + (done * 20 / total.coerceAtLeast(1))
             if (pct >= lastEmbedPct + 3) {
                 lastEmbedPct = pct
                 send(
@@ -129,12 +134,11 @@ class VideoPipelineEngine(private val context: Context) {
                         currentStep = PipelineStep.GENERATE_EMBEDDINGS,
                         progressPercent = pct,
                         currentFaceBitmap = previewBitmap,
-                        statusMessage = "Extracting face features (${idx + 1}/${allDetectedFaces.size})...",
+                        statusMessage = "Extracting face features ($done/$total)...",
                         completedSteps = completedSteps
                     )
                 )
             }
-            embedded
         }
         completedSteps.add(PipelineStep.GENERATE_EMBEDDINGS)
 
@@ -142,18 +146,14 @@ class VideoPipelineEngine(private val context: Context) {
         send(
             PipelineProgress(
                 currentStep = PipelineStep.CLUSTER_PEOPLE,
-                progressPercent = 68,
+                progressPercent = 72,
                 currentFaceBitmap = previewBitmap,
                 statusMessage = "Clustering unique individuals...",
                 completedSteps = completedSteps
             )
         )
 
-        // Geometry first: detections that sit in the same place in adjacent frames are the
-        // same person by construction, so recognition only has to decide which tracks go
-        // together rather than adjudicating every individual frame.
-        val tracklets = trackletBuilder.build(facesWithEmbeddings)
-        val clusterMap = clusterer.clusterTracklets(tracklets)
+        val clusterMap = clusterer.clusterTracklets(tracklets, trackletEmbeddings)
         completedSteps.add(PipelineStep.CLUSTER_PEOPLE)
 
         // 5. COUNT APPEARANCES & SELECT BEST SHOTS
