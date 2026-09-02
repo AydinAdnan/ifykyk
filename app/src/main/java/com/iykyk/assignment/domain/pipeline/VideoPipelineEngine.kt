@@ -18,6 +18,7 @@ class VideoPipelineEngine(private val context: Context) {
     private val trackletBuilder = TrackletBuilder(faceEmbedder)
     private val clusterer = AgglomerativeClusterer(faceEmbedder)
     private val segmenter = AppearanceSegmenter(maxGapMs = 1200L, minSegmentDurationMs = 350L)
+    private val cropRefiner = RepresentativeCropRefiner(frameExtractor, faceDetector)
     private val canvasRenderer = CollageCanvasRenderer(context)
 
     // channelFlow (not flow) because frame decoding runs on Dispatchers.IO and progress is
@@ -151,9 +152,13 @@ class VideoPipelineEngine(private val context: Context) {
             )
         )
 
-        val personClusters = clusterMap.map { (personId, personTracklets) ->
+        val draftClusters = clusterMap.map { (personId, personTracklets) ->
             segmenter.buildPerson(personId, personTracklets)
         }
+
+        // Only one frame per person is ever shown, so those few frames are worth
+        // re-decoding at full resolution for a genuinely sharp tile.
+        val personClusters = cropRefiner.refine(videoUri, draftClusters)
         completedSteps.add(PipelineStep.COUNT_APPEARANCES)
         completedSteps.add(PipelineStep.SELECT_BEST_SHOTS)
 
