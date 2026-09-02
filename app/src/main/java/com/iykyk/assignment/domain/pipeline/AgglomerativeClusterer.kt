@@ -6,8 +6,8 @@ import kotlin.math.sqrt
 
 class AgglomerativeClusterer(
     private val embedder: FaceEmbedder,
-    private val similarityThreshold: Float = 0.58f,
-    private val centroidMergeThreshold: Float = 0.64f
+    private val similarityThreshold: Float = 0.46f,
+    private val centroidMergeThreshold: Float = 0.52f
 ) {
 
     /**

@@ -23,10 +23,28 @@ class TFLiteFaceEmbedder(private val context: Context? = null) : FaceEmbedder {
         context?.let { ctx ->
             try {
                 val assetManager = ctx.assets
-                val modelFiles = assetManager.list("") ?: emptyArray()
-                val tfliteFile = modelFiles.firstOrNull { it.endsWith(".tflite") }
-                if (tfliteFile != null) {
-                    val afd = assetManager.openFd(tfliteFile)
+                val possibleNames = listOf("mobilefacenet.tflite", "facenet.tflite")
+                var afd: android.content.res.AssetFileDescriptor? = null
+                var loadedName = ""
+
+                for (name in possibleNames) {
+                    try {
+                        afd = assetManager.openFd(name)
+                        loadedName = name
+                        break
+                    } catch (ignored: Exception) {}
+                }
+
+                if (afd == null) {
+                    val modelFiles = assetManager.list("") ?: emptyArray()
+                    val tfliteFile = modelFiles.firstOrNull { it.endsWith(".tflite") }
+                    if (tfliteFile != null) {
+                        afd = assetManager.openFd(tfliteFile)
+                        loadedName = tfliteFile
+                    }
+                }
+
+                if (afd != null) {
                     val inputStream = FileInputStream(afd.fileDescriptor)
                     val fileChannel = inputStream.channel
                     val startOffset = afd.startOffset
@@ -36,9 +54,12 @@ class TFLiteFaceEmbedder(private val context: Context? = null) : FaceEmbedder {
                         setNumThreads(4)
                     }
                     interpreter = Interpreter(modelBuffer, options)
+                    android.util.Log.i("FaceEmbedder", "Successfully initialized TFLite neural model: $loadedName")
+                } else {
+                    android.util.Log.w("FaceEmbedder", "No .tflite model file found in assets, using deterministic extractor.")
                 }
             } catch (e: Exception) {
-                // Will use mathematical deterministic embedding fallback
+                android.util.Log.e("FaceEmbedder", "Failed to load TFLite interpreter", e)
                 interpreter = null
             }
         }

@@ -15,7 +15,7 @@ class VideoPipelineEngine(private val context: Context) {
     private val frameExtractor = VideoFrameExtractor(context)
     private val faceDetector = FaceDetectorEngine()
     private val faceEmbedder = TFLiteFaceEmbedder(context)
-    private val clusterer = AgglomerativeClusterer(faceEmbedder, similarityThreshold = 0.58f, centroidMergeThreshold = 0.64f)
+    private val clusterer = AgglomerativeClusterer(faceEmbedder, similarityThreshold = 0.46f, centroidMergeThreshold = 0.52f)
     private val segmenter = AppearanceSegmenter(maxGapMs = 1200L, minSegmentDurationMs = 350L)
     private val canvasRenderer = CollageCanvasRenderer(context)
 
