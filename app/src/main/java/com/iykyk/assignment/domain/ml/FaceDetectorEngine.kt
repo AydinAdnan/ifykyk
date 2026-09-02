@@ -82,7 +82,8 @@ class FaceDetectorEngine(
                     val aligned = FaceAlignmentHelper.alignFace(
                         frameBitmap, box, leftEye, rightEye, alignedCropSize
                     )
-                    val generousCrop = FaceAlignmentHelper.cropGenerousFace(frameBitmap, box, allBoxesInFrame)
+                    val (portraitCrop, cropPlan) =
+                        FaceAlignmentHelper.cropPortrait(frameBitmap, box, allBoxesInFrame)
 
                     // Measured on the native frame pixels, not on the aligned crop: the
                     // aligned crop is resampled to the model input size, so a small face
@@ -96,7 +97,8 @@ class FaceDetectorEngine(
                         frameWidth = frameBitmap.width,
                         frameHeight = frameBitmap.height,
                         alignedCropBitmap = aligned,
-                        generousCropBitmap = generousCrop,
+                        generousCropBitmap = portraitCrop,
+                        hasCleanCrop = cropPlan.isClean,
                         trackingId = face.trackingId,
                         isSoloShot = isSolo,
                         otherFaceBoxesInFrame = allBoxesInFrame,

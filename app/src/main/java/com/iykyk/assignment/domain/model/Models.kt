@@ -18,6 +18,8 @@ data class DetectedFace(
     val trackingId: Int? = null,
     val isSoloShot: Boolean = true,
     val otherFaceBoxesInFrame: List<Rect> = emptyList(),
+    /** True when the portrait crop for this face excludes every other face in the frame. */
+    val hasCleanCrop: Boolean = true,
     val leftEye: PointF? = null,
     val rightEye: PointF? = null,
     val nose: PointF? = null,

@@ -6,6 +6,9 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.PointF
 import android.graphics.Rect
+import com.iykyk.assignment.domain.pipeline.Box
+import com.iykyk.assignment.domain.pipeline.CropPlan
+import com.iykyk.assignment.domain.pipeline.PortraitCropPlanner
 import kotlin.math.atan2
 import kotlin.math.max
 import kotlin.math.min
@@ -68,53 +71,30 @@ object FaceAlignmentHelper {
     }
 
     /**
-     * Generous centered crop around the face for beautiful Polaroid framing.
-     * Aligns center on face and includes hair, chin, and upper collar.
+     * Renders the planned portrait crop for a face into an independent bitmap.
+     *
+     * Crop geometry is decided by [PortraitCropPlanner] on plain integer boxes; this only
+     * turns the resulting region into pixels, downscaled so the longest edge is at most
+     * [maxEdge].
      */
-    fun cropGenerousFace(
+    fun cropPortrait(
         frame: Bitmap,
         box: Rect,
         otherBoxes: List<Rect> = emptyList(),
-        maxEdge: Int = 720
-    ): Bitmap {
-        val faceW = box.width().toFloat()
-        val faceH = box.height().toFloat()
-
-        val marginX = (faceW * 0.40f).toInt()
-        val marginTop = (faceH * 0.35f).toInt()
-        val marginBottom = (faceH * 0.45f).toInt()
-
-        var left = max(0, box.left - marginX)
-        var top = max(0, box.top - marginTop)
-        var right = min(frame.width, box.right + marginX)
-        var bottom = min(frame.height, box.bottom + marginBottom)
-
-        // Avoid encroaching on other detected faces in the same frame
-        for (other in otherBoxes) {
-            if (other == box) continue
-            if (other.left >= box.right) {
-                val midX = (box.right + other.left) / 2
-                right = min(right, midX)
-            }
-            if (other.right <= box.left) {
-                val midX = (other.right + box.left) / 2
-                left = max(left, midX)
-            }
-            if (other.top >= box.bottom) {
-                val midY = (box.bottom + other.top) / 2
-                bottom = min(bottom, midY)
-            }
-            if (other.bottom <= box.top) {
-                val midY = (other.bottom + box.top) / 2
-                top = max(top, midY)
-            }
-        }
-
-        val width = max(1, right - left)
-        val height = max(1, bottom - top)
-
-        return copyRegion(frame, left, top, width, height, maxEdge)
+        maxEdge: Int = 900
+    ): Pair<Bitmap, CropPlan> {
+        val plan = PortraitCropPlanner.plan(
+            face = box.toPlannerBox(),
+            others = otherBoxes.map { it.toPlannerBox() },
+            frameWidth = frame.width,
+            frameHeight = frame.height
+        )
+        val region = plan.box
+        val bitmap = copyRegion(frame, region.left, region.top, region.width, region.height, maxEdge)
+        return bitmap to plan
     }
+
+    private fun Rect.toPlannerBox() = Box(left, top, right, bottom)
 
     /**
      * Copies a region out of [frame] into an independent bitmap, downscaled so its longest
