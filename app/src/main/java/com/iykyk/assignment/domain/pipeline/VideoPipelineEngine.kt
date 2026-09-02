@@ -1,4 +1,4 @@
-﻿package com.iykyk.assignment.domain.pipeline
+package com.iykyk.assignment.domain.pipeline
 
 import android.content.Context
 import android.net.Uri
@@ -160,15 +160,26 @@ class VideoPipelineEngine(private val context: Context) {
         val collageBitmap = canvasRenderer.renderCollageBitmap(personClusters)
         completedSteps.add(PipelineStep.CREATE_COLLAGE)
 
+        val totalAppearances = personClusters.sumOf { it.appearanceCount }
+        val finalAnalysis = AnalysisResult(
+            videoUri = videoUri.toString(),
+            videoDurationMs = frames.lastOrNull()?.timestampMs ?: 10000L,
+            totalUniquePeople = personClusters.size,
+            totalAppearances = totalAppearances,
+            clusters = personClusters,
+            collageBitmap = collageBitmap
+        )
+
         // FINISHED
         emit(
             PipelineProgress(
                 currentStep = PipelineStep.CREATE_COLLAGE,
                 progressPercent = 100,
                 currentFaceBitmap = personClusters.firstOrNull()?.representativeShot?.generousCropBitmap,
-                statusMessage = "Complete! Found  unique people.",
+                statusMessage = "Complete! Found ${personClusters.size} unique people.",
                 completedSteps = completedSteps,
-                isFinished = true
+                isFinished = true,
+                finalResult = finalAnalysis
             )
         )
     }.flowOn(Dispatchers.Default)

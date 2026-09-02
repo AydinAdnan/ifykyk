@@ -1,4 +1,4 @@
-﻿package com.iykyk.assignment.ui.viewmodel
+package com.iykyk.assignment.ui.viewmodel
 
 import android.app.Application
 import android.content.Intent
@@ -42,24 +42,14 @@ class CollageViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             _screenState.value = ScreenState.Processing(PipelineProgress())
             
-            var lastProgress = PipelineProgress()
-            val clusterList = mutableListOf<PersonCluster>()
-
             pipelineEngine.processVideo(uri).collect { progress ->
-                lastProgress = progress
                 _progressState.value = progress
                 _screenState.value = ScreenState.Processing(progress)
-            }
 
-            if (lastProgress.isFinished && lastProgress.error == null) {
-                // Fetch completed result
-                val result = pipelineEngine.getFinalAnalysisResult(
-                    videoUri = uri,
-                    clusters = clusterList, // Will use processed clusters
-                    durationMs = 10000L
-                )
-                currentResult = result
-                _screenState.value = ScreenState.Results(result)
+                if (progress.finalResult != null) {
+                    currentResult = progress.finalResult
+                    _screenState.value = ScreenState.Results(progress.finalResult)
+                }
             }
         }
     }

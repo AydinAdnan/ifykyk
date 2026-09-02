@@ -86,7 +86,8 @@ data class PipelineProgress(
     val statusMessage: String = "Initializing video pipeline...",
     val completedSteps: Set<PipelineStep> = emptySet(),
     val isFinished: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    val finalResult: AnalysisResult? = null
 )
 
 /**
