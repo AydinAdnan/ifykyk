@@ -58,19 +58,26 @@ class CollageViewModel(application: Application) : AndroidViewModel(application)
         _screenState.value = screen
     }
 
-    fun saveAndShareCollage(bitmap: Bitmap, onSaved: (Uri?) -> Unit) {
+    /** Saves the collage to the gallery and moves to the saved screen. */
+    fun saveCollage(bitmap: Bitmap, onResult: (Uri?) -> Unit) {
         viewModelScope.launch {
             val uri = canvasRenderer.saveToGallery(bitmap)
             val res = currentResult
-            if (res != null) {
+            if (uri != null && res != null) {
                 _screenState.value = ScreenState.CollageSaved(res, uri)
             }
-            onSaved(uri)
+            onResult(uri)
         }
     }
 
-    fun getShareIntent(bitmap: Bitmap): Intent {
-        return canvasRenderer.createShareIntent(bitmap)
+    /**
+     * Prepares the share sheet intent. Sharing no longer writes to the gallery as a side
+     * effect: saving and sharing are separate actions the user asked for separately.
+     */
+    fun shareCollage(bitmap: Bitmap, onIntent: (Intent?) -> Unit) {
+        viewModelScope.launch {
+            onIntent(canvasRenderer.createShareIntent(bitmap))
+        }
     }
 
     fun resetToHome() {

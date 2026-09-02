@@ -1,6 +1,7 @@
 package com.iykyk.assignment
 
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -67,14 +68,13 @@ class MainActivity : ComponentActivity() {
                                 CollagePreviewScreen(
                                     result = state.result,
                                     onSaveToGallery = { bitmap ->
-                                        viewModel.saveAndShareCollage(bitmap) {
-                                            // Saved to gallery
+                                        viewModel.saveCollage(bitmap) { uri ->
+                                            if (uri == null) showSaveFailed()
                                         }
                                     },
                                     onShareCollage = { bitmap ->
-                                        viewModel.saveAndShareCollage(bitmap) {
-                                            val shareIntent = viewModel.getShareIntent(bitmap)
-                                            startActivity(shareIntent)
+                                        viewModel.shareCollage(bitmap) { intent ->
+                                            if (intent != null) startActivity(intent) else showShareFailed()
                                         }
                                     },
                                     onViewBreakdown = {
@@ -95,8 +95,9 @@ class MainActivity : ComponentActivity() {
                                     result = state.result,
                                     onShare = {
                                         state.result.collageBitmap?.let { bmp ->
-                                            val shareIntent = viewModel.getShareIntent(bmp)
-                                            startActivity(shareIntent)
+                                            viewModel.shareCollage(bmp) { intent ->
+                                                if (intent != null) startActivity(intent) else showShareFailed()
+                                            }
                                         }
                                     },
                                     onHome = {
@@ -109,5 +110,13 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    private fun showSaveFailed() {
+        Toast.makeText(this, "Could not save the collage to your gallery.", Toast.LENGTH_LONG).show()
+    }
+
+    private fun showShareFailed() {
+        Toast.makeText(this, "Could not prepare the collage for sharing.", Toast.LENGTH_LONG).show()
     }
 }

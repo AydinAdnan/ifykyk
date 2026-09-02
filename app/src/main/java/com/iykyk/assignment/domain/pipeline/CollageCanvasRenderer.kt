@@ -1,5 +1,6 @@
 ﻿package com.iykyk.assignment.domain.pipeline
 
+import android.content.ClipData
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -510,9 +511,14 @@ class CollageCanvasRenderer(private val context: Context) {
     }
 
     /**
-     * Saves bitmap to MediaStore Pictures gallery.
+     * Saves the collage into the device gallery, returning its MediaStore uri or null.
+     *
+     * The pending-item dance is only available from API 29; before that the row is written
+     * directly, which is also why the manifest still asks for WRITE_EXTERNAL_STORAGE up to
+     * API 28. Failures are reported as null rather than thrown so the UI can tell the user
+     * instead of crashing on a save.
      */
-    suspend fun saveToGallery(bitmap: Bitmap, title: String = "unique_person_collage"): Uri? = withContext(Dispatchers.IO) {
+    suspend fun saveToGallery(bitmap: Bitmap, title: String = "collage"): Uri? = withContext(Dispatchers.IO) {
         val filename = "${title}_${System.currentTimeMillis()}.png"
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, filename)
@@ -525,35 +531,55 @@ class CollageCanvasRenderer(private val context: Context) {
 
         val resolver = context.contentResolver
         val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            ?: return@withContext null
 
-        if (uri != null) {
+        try {
             resolver.openOutputStream(uri)?.use { stream ->
-                bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
-            }
+                if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)) {
+                    throw IllegalStateException("Bitmap could not be encoded")
+                }
+            } ?: throw IllegalStateException("MediaStore returned no output stream")
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 values.clear()
                 values.put(MediaStore.Images.Media.IS_PENDING, 0)
                 resolver.update(uri, values, null, null)
             }
+            uri
+        } catch (e: Exception) {
+            // Do not leave a half-written or permanently pending row behind.
+            runCatching { resolver.delete(uri, null, null) }
+            null
         }
-        uri
     }
 
     /**
-     * Creates an ACTION_SEND share intent with FileProvider for the collage.
+     * Builds an ACTION_SEND chooser for the collage, wrapped so the standard Android share
+     * sheet is always shown rather than silently launching a default handler.
+     *
+     * The uri is also set as clipData: the read grant flag alone is unreliable for
+     * EXTRA_STREAM on several receivers, which show up as a blank or failed share.
      */
-    fun createShareIntent(bitmap: Bitmap): Intent {
-        val cachePath = File(context.cacheDir, "images").apply { mkdirs() }
-        val file = File(cachePath, "collage_${System.currentTimeMillis()}.png")
-        FileOutputStream(file).use { stream ->
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+    suspend fun createShareIntent(bitmap: Bitmap): Intent? = withContext(Dispatchers.IO) {
+        val contentUri = try {
+            val cachePath = File(context.cacheDir, "images").apply { mkdirs() }
+            val file = File(cachePath, "collage_${System.currentTimeMillis()}.png")
+            FileOutputStream(file).use { stream ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+            }
+            FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        } catch (e: Exception) {
+            return@withContext null
         }
 
-        val contentUri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-
-        return Intent(Intent.ACTION_SEND).apply {
+        val sendIntent = Intent(Intent.ACTION_SEND).apply {
             type = "image/png"
             putExtra(Intent.EXTRA_STREAM, contentUri)
+            clipData = ClipData.newRawUri("collage", contentUri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+
+        Intent.createChooser(sendIntent, "Share collage").apply {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
     }
