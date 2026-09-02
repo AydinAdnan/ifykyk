@@ -11,7 +11,8 @@ data class DetectedFace(
     val frameIndex: Int = 0,
     val timestampMs: Long = 0L,
     val boundingBox: Rect? = null,
-    val fullFrameBitmap: Bitmap? = null,
+    val frameWidth: Int = 0,
+    val frameHeight: Int = 0,
     val alignedCropBitmap: Bitmap? = null,
     val generousCropBitmap: Bitmap? = null,
     val trackingId: Int? = null,
@@ -30,6 +31,23 @@ data class DetectedFace(
     val sharpnessScore: Float = 0f,
     val embedding: FloatArray = FloatArray(0)
 ) {
+    /** Native pixel width of the detected face in the source frame. */
+    val faceWidthPx: Int get() = boundingBox?.width() ?: 0
+
+    /**
+     * True when the whole face box sits inside the frame with a small safety inset,
+     * i.e. the face is not clipped by the frame edge.
+     */
+    val isFullyVisible: Boolean
+        get() {
+            val box = boundingBox ?: return false
+            if (frameWidth <= 0 || frameHeight <= 0) return true
+            val insetX = frameWidth * 0.01f
+            val insetY = frameHeight * 0.01f
+            return box.left >= insetX && box.top >= insetY &&
+                box.right <= frameWidth - insetX && box.bottom <= frameHeight - insetY
+        }
+
     /**
      * Google Photos "Top Shot" / "Best Take" scoring algorithm:
      * - Hard penalties for motion blur and closed eyes

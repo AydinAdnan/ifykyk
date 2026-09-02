@@ -7,7 +7,7 @@ import com.iykyk.assignment.domain.ml.TFLiteFaceEmbedder
 import com.iykyk.assignment.domain.model.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flowOn
 
 class VideoPipelineEngine(private val context: Context) {
@@ -19,11 +19,13 @@ class VideoPipelineEngine(private val context: Context) {
     private val segmenter = AppearanceSegmenter(maxGapMs = 1200L, minSegmentDurationMs = 350L)
     private val canvasRenderer = CollageCanvasRenderer(context)
 
-    fun processVideo(videoUri: Uri): Flow<PipelineProgress> = flow {
+    // channelFlow (not flow) because frame decoding runs on Dispatchers.IO and progress is
+    // reported from inside that callback; a plain flow builder forbids cross-context emission.
+    fun processVideo(videoUri: Uri): Flow<PipelineProgress> = channelFlow {
         val completedSteps = mutableSetOf<PipelineStep>()
 
         // 1. EXTRACT FRAMES
-        emit(
+        send(
             PipelineProgress(
                 currentStep = PipelineStep.EXTRACT_FRAMES,
                 progressPercent = 10,
@@ -32,13 +34,50 @@ class VideoPipelineEngine(private val context: Context) {
             )
         )
 
-        val frames = frameExtractor.extractFrames(videoUri, targetFps = 4.0f) { current, total ->
-            // frame extraction progress
-        }
-        completedSteps.add(PipelineStep.EXTRACT_FRAMES)
+        val durationMs = frameExtractor.readDurationMs(videoUri) ?: 0L
+        val allDetectedFaces = mutableListOf<DetectedFace>()
+        var previewBitmap: android.graphics.Bitmap? = null
+        var bestSharpness = 0f
+        var lastEmittedPct = 10
+        var framesSeen = 0
+        var lastTimestampMs = 0L
 
-        if (frames.isEmpty()) {
-            emit(
+        // Frames are streamed and recycled one at a time rather than collected into a
+        // list: at 1080p a full sampling pass would otherwise hold hundreds of megabytes
+        // of bitmaps alive at once.
+        frameExtractor.forEachFrame(videoUri, targetFps = 3.0f) { frame, expectedTotal ->
+            framesSeen++
+            lastTimestampMs = frame.timestampMs
+
+            val faces = faceDetector.detectFacesInFrame(frame.bitmap, frame.index, frame.timestampMs)
+            for (face in faces) {
+                allDetectedFaces.add(face)
+                if (face.sharpnessScore > bestSharpness && face.generousCropBitmap != null) {
+                    bestSharpness = face.sharpnessScore
+                    previewBitmap = face.generousCropBitmap
+                }
+            }
+
+            val pct = 10 + (framesSeen * 35 / expectedTotal.coerceAtLeast(1)).coerceAtMost(35)
+            if (pct >= lastEmittedPct + 4) {
+                lastEmittedPct = pct
+                send(
+                    PipelineProgress(
+                        currentStep = PipelineStep.DETECT_FACES,
+                        progressPercent = pct,
+                        currentFaceBitmap = previewBitmap,
+                        statusMessage = "Found ${allDetectedFaces.size} face detections...",
+                        completedSteps = completedSteps
+                    )
+                )
+            }
+        }
+
+        completedSteps.add(PipelineStep.EXTRACT_FRAMES)
+        completedSteps.add(PipelineStep.DETECT_FACES)
+
+        if (framesSeen == 0) {
+            send(
                 PipelineProgress(
                     currentStep = PipelineStep.EXTRACT_FRAMES,
                     progressPercent = 0,
@@ -48,52 +87,11 @@ class VideoPipelineEngine(private val context: Context) {
                     error = "Could not decode video frames."
                 )
             )
-            return@flow
+            return@channelFlow
         }
-
-        // 2. DETECT FACES
-        emit(
-            PipelineProgress(
-                currentStep = PipelineStep.DETECT_FACES,
-                progressPercent = 25,
-                statusMessage = "Detecting faces in ${frames.size} frames...",
-                completedSteps = completedSteps
-            )
-        )
-
-        val allDetectedFaces = mutableListOf<DetectedFace>()
-        var bestFaceBitmap: android.graphics.Bitmap? = null
-        var bestSharpness = 0f
-        var lastEmittedPct = 25
-
-        frames.forEachIndexed { idx, frame ->
-            val faces = faceDetector.detectFacesInFrame(frame.bitmap, frame.index, frame.timestampMs)
-            for (face in faces) {
-                allDetectedFaces.add(face)
-                if (face.sharpnessScore > bestSharpness && face.generousCropBitmap != null) {
-                    bestSharpness = face.sharpnessScore
-                    bestFaceBitmap = face.generousCropBitmap
-                }
-            }
-
-            val pct = 25 + ((idx + 1) * 20 / frames.size)
-            if (pct >= lastEmittedPct + 4 || idx == frames.lastIndex) {
-                lastEmittedPct = pct
-                emit(
-                    PipelineProgress(
-                        currentStep = PipelineStep.DETECT_FACES,
-                        progressPercent = pct,
-                        currentFaceBitmap = bestFaceBitmap,
-                        statusMessage = "Found ${allDetectedFaces.size} face detections...",
-                        completedSteps = completedSteps
-                    )
-                )
-            }
-        }
-        completedSteps.add(PipelineStep.DETECT_FACES)
 
         if (allDetectedFaces.isEmpty()) {
-            emit(
+            send(
                 PipelineProgress(
                     currentStep = PipelineStep.DETECT_FACES,
                     progressPercent = 0,
@@ -103,15 +101,15 @@ class VideoPipelineEngine(private val context: Context) {
                     error = "No faces detected in this video."
                 )
             )
-            return@flow
+            return@channelFlow
         }
 
         // 3. GENERATE EMBEDDINGS
-        emit(
+        send(
             PipelineProgress(
                 currentStep = PipelineStep.GENERATE_EMBEDDINGS,
                 progressPercent = 50,
-                currentFaceBitmap = bestFaceBitmap,
+                currentFaceBitmap = previewBitmap,
                 statusMessage = "Extracting 512-d face feature embeddings...",
                 completedSteps = completedSteps
             )
@@ -124,11 +122,11 @@ class VideoPipelineEngine(private val context: Context) {
         completedSteps.add(PipelineStep.GENERATE_EMBEDDINGS)
 
         // 4. CLUSTER PEOPLE
-        emit(
+        send(
             PipelineProgress(
                 currentStep = PipelineStep.CLUSTER_PEOPLE,
                 progressPercent = 68,
-                currentFaceBitmap = bestFaceBitmap,
+                currentFaceBitmap = previewBitmap,
                 statusMessage = "Clustering unique individuals...",
                 completedSteps = completedSteps
             )
@@ -138,11 +136,11 @@ class VideoPipelineEngine(private val context: Context) {
         completedSteps.add(PipelineStep.CLUSTER_PEOPLE)
 
         // 5. COUNT APPEARANCES & SELECT BEST SHOTS
-        emit(
+        send(
             PipelineProgress(
                 currentStep = PipelineStep.COUNT_APPEARANCES,
                 progressPercent = 82,
-                currentFaceBitmap = bestFaceBitmap,
+                currentFaceBitmap = previewBitmap,
                 statusMessage = "Analyzing appearance segments & representative shots...",
                 completedSteps = completedSteps
             )
@@ -155,7 +153,7 @@ class VideoPipelineEngine(private val context: Context) {
         completedSteps.add(PipelineStep.SELECT_BEST_SHOTS)
 
         // 6. CREATE COLLAGE
-        emit(
+        send(
             PipelineProgress(
                 currentStep = PipelineStep.CREATE_COLLAGE,
                 progressPercent = 95,
@@ -171,7 +169,7 @@ class VideoPipelineEngine(private val context: Context) {
         val totalAppearances = personClusters.sumOf { it.appearanceCount }
         val finalAnalysis = AnalysisResult(
             videoUri = videoUri.toString(),
-            videoDurationMs = frames.lastOrNull()?.timestampMs ?: 10000L,
+            videoDurationMs = if (durationMs > 0L) durationMs else lastTimestampMs,
             totalUniquePeople = personClusters.size,
             totalAppearances = totalAppearances,
             clusters = personClusters,
@@ -179,7 +177,7 @@ class VideoPipelineEngine(private val context: Context) {
         )
 
         // FINISHED
-        emit(
+        send(
             PipelineProgress(
                 currentStep = PipelineStep.CREATE_COLLAGE,
                 progressPercent = 100,

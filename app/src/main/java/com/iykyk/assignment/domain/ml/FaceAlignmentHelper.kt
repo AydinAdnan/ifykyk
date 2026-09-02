@@ -65,7 +65,12 @@ object FaceAlignmentHelper {
      * Generous centered crop around the face for beautiful Polaroid framing.
      * Aligns center on face and includes hair, chin, and upper collar.
      */
-    fun cropGenerousFace(frame: Bitmap, box: Rect, otherBoxes: List<Rect> = emptyList()): Bitmap {
+    fun cropGenerousFace(
+        frame: Bitmap,
+        box: Rect,
+        otherBoxes: List<Rect> = emptyList(),
+        maxEdge: Int = 720
+    ): Bitmap {
         val faceW = box.width().toFloat()
         val faceH = box.height().toFloat()
 
@@ -102,7 +107,31 @@ object FaceAlignmentHelper {
         val width = max(1, right - left)
         val height = max(1, bottom - top)
 
-        return Bitmap.createBitmap(frame, left, top, width, height)
+        return copyRegion(frame, left, top, width, height, maxEdge)
+    }
+
+    /**
+     * Copies a region out of [frame] into an independent bitmap, downscaled so its longest
+     * edge is at most [maxEdge]. Always returns a fresh bitmap: the caller recycles source
+     * frames as it streams, and Bitmap.createBitmap can alias the source for full-bounds
+     * subsets, which would leave the crop pointing at recycled pixels.
+     */
+    fun copyRegion(frame: Bitmap, x: Int, y: Int, w: Int, h: Int, maxEdge: Int): Bitmap {
+        val srcW = w.coerceAtMost(frame.width - x).coerceAtLeast(1)
+        val srcH = h.coerceAtMost(frame.height - y).coerceAtLeast(1)
+
+        val scale = min(1f, maxEdge.toFloat() / max(srcW, srcH))
+        val dstW = max(1, (srcW * scale).toInt())
+        val dstH = max(1, (srcH * scale).toInt())
+
+        val out = Bitmap.createBitmap(dstW, dstH, Bitmap.Config.ARGB_8888)
+        Canvas(out).drawBitmap(
+            frame,
+            Rect(x, y, x + srcW, y + srcH),
+            Rect(0, 0, dstW, dstH),
+            Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        )
+        return out
     }
 
     /**

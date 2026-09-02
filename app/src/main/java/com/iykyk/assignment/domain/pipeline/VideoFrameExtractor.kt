@@ -8,6 +8,7 @@ import android.os.Build
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.max
+import kotlin.math.min
 
 data class ExtractedFrame(
     val index: Int,
@@ -17,78 +18,140 @@ data class ExtractedFrame(
 
 class VideoFrameExtractor(private val context: Context) {
 
+    companion object {
+        /**
+         * Frames are decoded at this longest-edge resolution. 480p was far too small:
+         * a person filling a quarter of the height yields a ~70px face, which is below
+         * FaceNet's useful input size and produces soft, upscaled collage tiles. 1080p
+         * keeps typical faces in the 150-400px range so crops stay genuinely sharp.
+         */
+        const val MAX_FRAME_EDGE = 1080
+
+        /** Upper bound on decoded frames, to keep memory and latency bounded. */
+        const val MAX_FRAMES = 90
+
+        /** Lower bound, so very short clips still get dense sampling. */
+        const val MIN_INTERVAL_MS = 250L
+    }
+
+    /** Video duration in milliseconds, or null when it cannot be read. */
+    suspend fun readDurationMs(videoUri: Uri): Long? = withContext(Dispatchers.IO) {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(context, videoUri)
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+        } catch (e: Exception) {
+            null
+        } finally {
+            try { retriever.release() } catch (e: Exception) { /* ignored */ }
+        }
+    }
+
     /**
-     * Extracts frames from video URI at target FPS (default 2 FPS).
+     * Streams frames at approximately [targetFps], capped at [MAX_FRAMES].
+     *
+     * Frames are handed to [onFrame] one at a time and recycled immediately afterwards.
+     * Materialising every frame into a list is not viable at this resolution: 90 frames
+     * of 1080x1920 ARGB_8888 is roughly 745 MB, so consumers must extract what they need
+     * (crops, embeddings, metadata) inside the callback.
      */
-    suspend fun extractFrames(
+    suspend fun forEachFrame(
         videoUri: Uri,
         targetFps: Float = 3.0f,
-        onProgress: (Int, Int) -> Unit
-    ): List<ExtractedFrame> = withContext(Dispatchers.IO) {
+        onFrame: suspend (ExtractedFrame, Int) -> Unit
+    ): Int = withContext(Dispatchers.IO) {
         val retriever = MediaMetadataRetriever()
-        val frames = mutableListOf<ExtractedFrame>()
+        var emitted = 0
 
         try {
             retriever.setDataSource(context, videoUri)
-            val durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-            val durationMs = durationStr?.toLongOrNull() ?: 10000L
+            val durationMs = retriever
+                .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull() ?: 10_000L
 
-            val targetInterval = (1000f / targetFps).toLong().coerceAtLeast(350L)
-            // Limit to max 35 frames for instantaneous processing
-            val intervalMs = maxOf(targetInterval, (durationMs / 35L))
-            val totalExpectedFrames = max(1, (durationMs / intervalMs).toInt())
+            val targetInterval = (1000f / targetFps).toLong().coerceAtLeast(MIN_INTERVAL_MS)
+            val intervalMs = max(targetInterval, durationMs / MAX_FRAMES)
+            val totalExpectedFrames = max(1, min(MAX_FRAMES, (durationMs / intervalMs).toInt()))
 
             var currentTimestamp = 0L
             var frameIndex = 0
 
-            while (currentTimestamp < durationMs) {
-                val timeUs = currentTimestamp * 1000L
-                val frameBitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            while (currentTimestamp < durationMs && emitted < MAX_FRAMES) {
+                val raw = decodeFrame(retriever, currentTimestamp * 1000L)
+                if (raw != null) {
+                    val bitmap = scaleDownIfLarge(raw, MAX_FRAME_EDGE)
                     try {
-                        retriever.getScaledFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST, 480, 854)
-                    } catch (e: Exception) {
-                        retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
+                        onFrame(ExtractedFrame(frameIndex, currentTimestamp, bitmap), totalExpectedFrames)
+                    } finally {
+                        if (!bitmap.isRecycled) bitmap.recycle()
                     }
-                } else {
-                    retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
-                } ?: retriever.getFrameAtTime(timeUs)
-
-                if (frameBitmap != null) {
-                    val scaled = scaleDownIfLarge(frameBitmap, maxDim = 480)
-                    frames.add(
-                        ExtractedFrame(
-                            index = frameIndex,
-                            timestampMs = currentTimestamp,
-                            bitmap = scaled
-                        )
-                    )
+                    emitted++
                 }
-
                 frameIndex++
                 currentTimestamp += intervalMs
-                onProgress(frameIndex, totalExpectedFrames)
             }
         } catch (e: Exception) {
             e.printStackTrace()
         } finally {
-            try {
-                retriever.release()
-            } catch (e: Exception) {
-                // ignored
-            }
+            try { retriever.release() } catch (e: Exception) { /* ignored */ }
         }
 
-        frames
+        emitted
+    }
+
+    /**
+     * Decodes a single frame at [timestampMs] at [maxEdge] resolution. Used to re-extract
+     * a chosen representative shot at higher fidelity than the analysis pass.
+     */
+    suspend fun decodeFrameAt(
+        videoUri: Uri,
+        timestampMs: Long,
+        maxEdge: Int
+    ): Bitmap? = withContext(Dispatchers.IO) {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(context, videoUri)
+            decodeFrame(retriever, timestampMs * 1000L)?.let { scaleDownIfLarge(it, maxEdge) }
+        } catch (e: Exception) {
+            null
+        } finally {
+            try { retriever.release() } catch (e: Exception) { /* ignored */ }
+        }
+    }
+
+    private fun decodeFrame(retriever: MediaMetadataRetriever, timeUs: Long): Bitmap? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            try {
+                // getScaledFrameAtTime letterboxes into the given box, so pass a square
+                // bound and let scaleDownIfLarge do the final aspect-correct resize.
+                retriever.getScaledFrameAtTime(
+                    timeUs,
+                    MediaMetadataRetriever.OPTION_CLOSEST,
+                    MAX_FRAME_EDGE,
+                    MAX_FRAME_EDGE
+                )?.let { return it }
+            } catch (e: Exception) {
+                // fall through to the unscaled path
+            }
+        }
+        return try {
+            retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
+                ?: retriever.getFrameAtTime(timeUs)
+        } catch (e: Exception) {
+            null
+        }
     }
 
     private fun scaleDownIfLarge(bitmap: Bitmap, maxDim: Int): Bitmap {
         val w = bitmap.width
         val h = bitmap.height
-        if (w <= maxDim && h <= maxDim) return bitmap
+        if (max(w, h) <= maxDim) return bitmap
 
         val scale = maxDim.toFloat() / max(w, h)
-        val newW = (w * scale).toInt()
-        val newH = (h * scale).toInt()
-        return Bitmap.createScaledBitmap(bitmap, newW, newH, true)
+        val newW = max(1, (w * scale).toInt())
+        val newH = max(1, (h * scale).toInt())
+        val scaled = Bitmap.createScaledBitmap(bitmap, newW, newH, true)
+        if (scaled != bitmap) bitmap.recycle()
+        return scaled
     }
 }
