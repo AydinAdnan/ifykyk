@@ -117,9 +117,24 @@ class VideoPipelineEngine(private val context: Context) {
             )
         )
 
+        var lastEmbedPct = 50
         val facesWithEmbeddings = allDetectedFaces.mapIndexed { idx, face ->
-            val embedding = faceEmbedder.getEmbedding(face.alignedCropBitmap)
-            face.copy(embedding = embedding)
+            val embedded = face.copy(embedding = faceEmbedder.getEmbedding(face.alignedCropBitmap))
+
+            val pct = 50 + ((idx + 1) * 18 / allDetectedFaces.size)
+            if (pct >= lastEmbedPct + 3) {
+                lastEmbedPct = pct
+                send(
+                    PipelineProgress(
+                        currentStep = PipelineStep.GENERATE_EMBEDDINGS,
+                        progressPercent = pct,
+                        currentFaceBitmap = previewBitmap,
+                        statusMessage = "Extracting face features (${idx + 1}/${allDetectedFaces.size})...",
+                        completedSteps = completedSteps
+                    )
+                )
+            }
+            embedded
         }
         completedSteps.add(PipelineStep.GENERATE_EMBEDDINGS)
 
@@ -199,21 +214,4 @@ class VideoPipelineEngine(private val context: Context) {
             )
         )
     }.flowOn(Dispatchers.Default)
-
-    suspend fun getFinalAnalysisResult(
-        videoUri: Uri,
-        clusters: List<PersonCluster>,
-        durationMs: Long
-    ): AnalysisResult {
-        val totalAppearances = clusters.sumOf { it.appearanceCount }
-        val collageBitmap = canvasRenderer.renderCollageBitmap(clusters)
-        return AnalysisResult(
-            videoUri = videoUri.toString(),
-            videoDurationMs = durationMs,
-            totalUniquePeople = clusters.size,
-            totalAppearances = totalAppearances,
-            clusters = clusters,
-            collageBitmap = collageBitmap
-        )
-    }
 }

@@ -20,12 +20,17 @@ class VideoFrameExtractor(private val context: Context) {
 
     companion object {
         /**
-         * Frames are decoded at this longest-edge resolution. 480p was far too small:
-         * a person filling a quarter of the height yields a ~70px face, which is below
-         * FaceNet's useful input size and produces soft, upscaled collage tiles. 1080p
-         * keeps typical faces in the 150-400px range so crops stay genuinely sharp.
+         * Longest edge for the analysis sweep.
+         *
+         * 480p was too small: a medium shot yielded a face around 170px and a wide shot
+         * far less, below what FaceNet resolves well and below what the detector needs to
+         * find secondary people at all. 720p puts a medium shot near 256px while costing
+         * roughly half of what 1080p costs to decode and detect on.
+         *
+         * Tile sharpness is no longer tied to this number: RepresentativeCropRefiner
+         * re-decodes the handful of chosen frames at full resolution.
          */
-        const val MAX_FRAME_EDGE = 1080
+        const val MAX_FRAME_EDGE = 720
 
         /** Upper bound on decoded frames, to keep memory and latency bounded. */
         const val MAX_FRAMES = 90

@@ -12,7 +12,16 @@ import kotlin.coroutines.resume
 
 class FaceDetectorEngine(
     /** Edge length of the aligned crop, dictated by the recognition model input. */
-    private val alignedCropSize: Int = 160
+    private val alignedCropSize: Int = 160,
+    /**
+     * Longest edge of the portrait crop retained per detection.
+     *
+     * Deliberately small. A crop is kept for every detection in the video, so a
+     * presentation-sized one would cost megabytes each and exhaust memory long before the
+     * sweep finished. Only the chosen shot is ever displayed, and
+     * RepresentativeCropRefiner re-cuts that one at full resolution.
+     */
+    private val portraitCropMaxEdge: Int = 320
 ) {
 
     private val detector by lazy {
@@ -83,7 +92,9 @@ class FaceDetectorEngine(
                         frameBitmap, box, leftEye, rightEye, alignedCropSize
                     )
                     val (portraitCrop, cropPlan) =
-                        FaceAlignmentHelper.cropPortrait(frameBitmap, box, allBoxesInFrame)
+                        FaceAlignmentHelper.cropPortrait(
+                            frameBitmap, box, allBoxesInFrame, portraitCropMaxEdge
+                        )
 
                     // Measured on the native frame pixels, not on the aligned crop: the
                     // aligned crop is resampled to the model input size, so a small face
