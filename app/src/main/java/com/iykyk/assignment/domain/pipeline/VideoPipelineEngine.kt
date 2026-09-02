@@ -56,31 +56,39 @@ class VideoPipelineEngine(private val context: Context) {
             PipelineProgress(
                 currentStep = PipelineStep.DETECT_FACES,
                 progressPercent = 25,
-                statusMessage = "Detecting faces in  frames...",
+                statusMessage = "Detecting faces in ${frames.size} frames...",
                 completedSteps = completedSteps
             )
         )
 
         val allDetectedFaces = mutableListOf<DetectedFace>()
-        var lastFaceBitmap: android.graphics.Bitmap? = null
+        var bestFaceBitmap: android.graphics.Bitmap? = null
+        var bestSharpness = 0f
+        var lastEmittedPct = 25
 
         frames.forEachIndexed { idx, frame ->
             val faces = faceDetector.detectFacesInFrame(frame.bitmap, frame.index, frame.timestampMs)
             for (face in faces) {
-                lastFaceBitmap = face.generousCropBitmap
                 allDetectedFaces.add(face)
+                if (face.sharpnessScore > bestSharpness && face.generousCropBitmap != null) {
+                    bestSharpness = face.sharpnessScore
+                    bestFaceBitmap = face.generousCropBitmap
+                }
             }
 
             val pct = 25 + ((idx + 1) * 20 / frames.size)
-            emit(
-                PipelineProgress(
-                    currentStep = PipelineStep.DETECT_FACES,
-                    progressPercent = pct,
-                    currentFaceBitmap = lastFaceBitmap,
-                    statusMessage = "Detected  face instances...",
-                    completedSteps = completedSteps
+            if (pct >= lastEmittedPct + 4 || idx == frames.lastIndex) {
+                lastEmittedPct = pct
+                emit(
+                    PipelineProgress(
+                        currentStep = PipelineStep.DETECT_FACES,
+                        progressPercent = pct,
+                        currentFaceBitmap = bestFaceBitmap,
+                        statusMessage = "Found ${allDetectedFaces.size} face detections...",
+                        completedSteps = completedSteps
+                    )
                 )
-            )
+            }
         }
         completedSteps.add(PipelineStep.DETECT_FACES)
 
@@ -103,7 +111,7 @@ class VideoPipelineEngine(private val context: Context) {
             PipelineProgress(
                 currentStep = PipelineStep.GENERATE_EMBEDDINGS,
                 progressPercent = 50,
-                currentFaceBitmap = lastFaceBitmap,
+                currentFaceBitmap = bestFaceBitmap,
                 statusMessage = "Extracting 512-d face feature embeddings...",
                 completedSteps = completedSteps
             )
@@ -120,7 +128,7 @@ class VideoPipelineEngine(private val context: Context) {
             PipelineProgress(
                 currentStep = PipelineStep.CLUSTER_PEOPLE,
                 progressPercent = 68,
-                currentFaceBitmap = lastFaceBitmap,
+                currentFaceBitmap = bestFaceBitmap,
                 statusMessage = "Clustering unique individuals...",
                 completedSteps = completedSteps
             )
@@ -134,7 +142,7 @@ class VideoPipelineEngine(private val context: Context) {
             PipelineProgress(
                 currentStep = PipelineStep.COUNT_APPEARANCES,
                 progressPercent = 82,
-                currentFaceBitmap = lastFaceBitmap,
+                currentFaceBitmap = bestFaceBitmap,
                 statusMessage = "Analyzing appearance segments & representative shots...",
                 completedSteps = completedSteps
             )

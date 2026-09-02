@@ -13,8 +13,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iykyk.assignment.domain.model.AnalysisResult
@@ -39,7 +37,7 @@ fun AppearanceBreakdownScreen(
     ) {
         Spacer(modifier = Modifier.height(28.dp))
 
-        // 1. Blue Ripped Header: "APPEARANCE BREAKDOWN ♡"
+        // 1. Blue Ripped Header: "APPEARANCE BREAKDOWN" in Cherry Bomb One
         Box(modifier = Modifier.fillMaxWidth()) {
             BrutalCard(
                 backgroundColor = CardBlue,
@@ -53,10 +51,9 @@ fun AppearanceBreakdownScreen(
                 ) {
                     Text(
                         text = "APPEARANCE\nBREAKDOWN",
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Black,
-                        fontFamily = FontFamily.SansSerif,
-                        lineHeight = 28.sp,
+                        fontSize = 26.sp,
+                        fontFamily = CherryBombOneFamily,
+                        lineHeight = 30.sp,
                         color = TextPrimary
                     )
                     HeartDoodle()
@@ -114,8 +111,7 @@ fun AppearanceBreakdownScreen(
                             Text(
                                 text = cluster.personLabel,
                                 fontSize = 15.sp,
-                                fontWeight = FontWeight.Black,
-                                fontFamily = FontFamily.Monospace,
+                                fontFamily = GoogleSansFamily,
                                 color = TextPrimary
                             )
 
@@ -125,7 +121,6 @@ fun AppearanceBreakdownScreen(
                             Text(
                                 text = ". . . . . . . . . . . . . . . .",
                                 fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold,
                                 color = TextMuted,
                                 maxLines = 1,
                                 modifier = Modifier.weight(1f)
@@ -137,9 +132,8 @@ fun AppearanceBreakdownScreen(
                             val countStr = String.format("%02d", cluster.appearanceCount)
                             Text(
                                 text = countStr,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Black,
-                                fontFamily = FontFamily.Monospace,
+                                fontSize = 18.sp,
+                                fontFamily = CherryBombOneFamily,
                                 color = TextPrimary
                             )
                         }
@@ -167,16 +161,15 @@ fun AppearanceBreakdownScreen(
             ) {
                 Text(
                     text = "WHAT IS AN APPEARANCE?",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Black,
-                    fontFamily = FontFamily.Monospace,
+                    fontSize = 16.sp,
+                    fontFamily = CherryBombOneFamily,
                     color = TextPrimary
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     text = "An appearance is counted when a person is visible in the frame. Multiple people in the same frame are counted separately.",
                     fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
+                    fontFamily = GoogleSansFamily,
                     lineHeight = 18.sp,
                     color = TextSecondary
                 )

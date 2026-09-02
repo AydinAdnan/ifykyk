@@ -2,7 +2,6 @@
 
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -13,7 +12,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowOutward
-import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -23,8 +21,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iykyk.assignment.ui.components.*
@@ -35,8 +31,8 @@ fun HomeScreen(
     onVideoSelected: (Uri) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val singlePhotoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia(),
+    val videoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
         onResult = { uri ->
             if (uri != null) {
                 onVideoSelected(uri)
@@ -54,7 +50,7 @@ fun HomeScreen(
     ) {
         Spacer(modifier = Modifier.height(36.dp))
 
-        // 1. Top Yellow Card: "UNIQUE PERSON COLLAGE"
+        // 1. Top Yellow Card: "UNIQUE PERSON COLLAGE" in Cherry Bomb One
         Box(
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -65,10 +61,9 @@ fun HomeScreen(
             ) {
                 Text(
                     text = "UNIQUE\nPERSON\nCOLLAGE",
-                    fontSize = 32.sp,
-                    fontWeight = FontWeight.Black,
-                    fontFamily = FontFamily.SansSerif,
-                    lineHeight = 36.sp,
+                    fontSize = 34.sp,
+                    fontFamily = CherryBombOneFamily,
+                    lineHeight = 38.sp,
                     color = TextPrimary
                 )
             }
@@ -86,7 +81,7 @@ fun HomeScreen(
             BandaidDecoration(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .offset(x = 8.dp, y = (-10).dp),
+                    .offset(x = 6.dp, y = (-10).dp),
                 rotation = 20f
             )
 
@@ -117,11 +112,9 @@ fun HomeScreen(
                 modifier = Modifier.fillMaxWidth(0.92f)
             ) {
                 Text(
-                    text = "Video in.\nPeople out.\nCollage made. \uD83D\uDE42",
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace,
-                    lineHeight = 24.sp,
+                    text = "Video in. People out. Collage made. \uD83D\uDE42",
+                    fontSize = 15.sp,
+                    fontFamily = GoogleSansFamily,
                     color = TextPrimary
                 )
             }
@@ -138,7 +131,7 @@ fun HomeScreen(
 
         Spacer(modifier = Modifier.height(28.dp))
 
-        // 3. Blue Torn Notepad Card: "SELECT VIDEO / MP4, MOV up to 2GB"
+        // 3. Blue Torn Notepad Card: "SELECT VIDEO"
         Box(
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -164,9 +157,7 @@ fun HomeScreen(
                         .background(CardBlue)
                         .border(2.5.dp, BrutalBorder, RoundedCornerShape(16.dp))
                         .clickable {
-                            singlePhotoPickerLauncher.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
-                            )
+                            videoPickerLauncher.launch("video/*")
                         }
                         .padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
@@ -200,15 +191,14 @@ fun HomeScreen(
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
                                 text = "SELECT VIDEO",
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Black,
-                                fontFamily = FontFamily.Monospace,
+                                fontSize = 18.sp,
+                                fontFamily = CherryBombOneFamily,
                                 color = TextPrimary
                             )
                             Text(
                                 text = "MP4, MOV up to 2GB",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp,
+                                fontFamily = GoogleSansFamily,
                                 color = TextSecondary
                             )
                         }
@@ -220,9 +210,7 @@ fun HomeScreen(
                     BrutalButton(
                         text = "BROWSE FILES",
                         onClick = {
-                            singlePhotoPickerLauncher.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
-                            )
+                            videoPickerLauncher.launch("video/*")
                         },
                         backgroundColor = CardGreen,
                         trailingIcon = {

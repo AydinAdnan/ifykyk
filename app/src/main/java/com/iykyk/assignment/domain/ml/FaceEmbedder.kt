@@ -54,14 +54,18 @@ class TFLiteFaceEmbedder(private val context: Context? = null) : FaceEmbedder {
     }
 
     private fun runInference(interp: Interpreter, bitmap: Bitmap): FloatArray {
-        val scaled = Bitmap.createScaledBitmap(bitmap, 112, 112, true)
-        val inputBuffer = ByteBuffer.allocateDirect(1 * 112 * 112 * 3 * 4).apply {
+        val inputShape = interp.getInputTensor(0).shape() // e.g. [1, 160, 160, 3] or [1, 112, 112, 3]
+        val targetH = if (inputShape.size >= 3) inputShape[1] else 112
+        val targetW = if (inputShape.size >= 3) inputShape[2] else 112
+
+        val scaled = Bitmap.createScaledBitmap(bitmap, targetW, targetH, true)
+        val inputBuffer = ByteBuffer.allocateDirect(1 * targetW * targetH * 3 * 4).apply {
             order(ByteOrder.nativeOrder())
         }
         inputBuffer.rewind()
 
-        val pixels = IntArray(112 * 112)
-        scaled.getPixels(pixels, 0, 112, 0, 0, 112, 112)
+        val pixels = IntArray(targetW * targetH)
+        scaled.getPixels(pixels, 0, targetW, 0, 0, targetW, targetH)
 
         for (pixel in pixels) {
             val r = ((pixel shr 16) and 0xFF) - 127.5f
@@ -72,7 +76,9 @@ class TFLiteFaceEmbedder(private val context: Context? = null) : FaceEmbedder {
             inputBuffer.putFloat(b / 128.0f)
         }
 
-        val outputArray = Array(1) { FloatArray(embeddingDim) }
+        val outShape = interp.getOutputTensor(0).shape()
+        val outDim = if (outShape.isNotEmpty()) outShape.last() else embeddingDim
+        val outputArray = Array(1) { FloatArray(outDim) }
         interp.run(inputBuffer, outputArray)
 
         return l2Normalize(outputArray[0])

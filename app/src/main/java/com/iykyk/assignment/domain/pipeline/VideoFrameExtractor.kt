@@ -1,4 +1,4 @@
-﻿package com.iykyk.assignment.domain.pipeline
+package com.iykyk.assignment.domain.pipeline
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -21,7 +21,7 @@ class VideoFrameExtractor(private val context: Context) {
      */
     suspend fun extractFrames(
         videoUri: Uri,
-        targetFps: Float = 2.0f,
+        targetFps: Float = 3.0f,
         onProgress: (Int, Int) -> Unit
     ): List<ExtractedFrame> = withContext(Dispatchers.IO) {
         val retriever = MediaMetadataRetriever()
@@ -32,17 +32,17 @@ class VideoFrameExtractor(private val context: Context) {
             val durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
             val durationMs = durationStr?.toLongOrNull() ?: 10000L
 
-            val intervalMs = (1000f / targetFps).toLong()
+            val intervalMs = (1000f / targetFps).toLong().coerceAtLeast(250L)
             val totalExpectedFrames = max(1, (durationMs / intervalMs).toInt())
 
             var currentTimestamp = 0L
             var frameIndex = 0
 
             while (currentTimestamp < durationMs) {
-                // Seek to microsecond timestamp with CLOSEST
+                // Seek to microsecond timestamp with OPTION_CLOSEST for exact frame accuracy
                 val frameBitmap = retriever.getFrameAtTime(
                     currentTimestamp * 1000L,
-                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC
+                    MediaMetadataRetriever.OPTION_CLOSEST
                 )
 
                 if (frameBitmap != null) {

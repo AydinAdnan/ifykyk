@@ -1,6 +1,8 @@
 ﻿package com.iykyk.assignment.ui.screens
 
 import android.graphics.Bitmap
+import android.widget.Toast
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -8,7 +10,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -16,9 +19,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iykyk.assignment.domain.model.AnalysisResult
@@ -28,10 +33,13 @@ import com.iykyk.assignment.ui.theme.*
 @Composable
 fun CollagePreviewScreen(
     result: AnalysisResult,
-    onSaveAndShare: (Bitmap) -> Unit,
+    onSaveToGallery: (Bitmap) -> Unit,
+    onShareCollage: (Bitmap) -> Unit,
     onViewBreakdown: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -42,23 +50,22 @@ fun CollagePreviewScreen(
     ) {
         Spacer(modifier = Modifier.height(28.dp))
 
-        // 1. Top Badge: "COLLAGE PREVIEW" with paperclip
+        // 1. Top Badge: "COLLAGE PREVIEW" in Cherry Bomb One
         Box(
             modifier = Modifier.wrapContentSize(),
             contentAlignment = Alignment.Center
         ) {
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
+                    .clip(RoundedCornerShape(12.dp))
                     .background(CardPink)
-                    .border(2.dp, BrutalBorder, RoundedCornerShape(8.dp))
-                    .padding(horizontal = 24.dp, vertical = 8.dp)
+                    .border(2.5.dp, BrutalBorder, RoundedCornerShape(12.dp))
+                    .padding(horizontal = 28.dp, vertical = 10.dp)
             ) {
                 Text(
                     text = "COLLAGE PREVIEW",
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Black,
-                    fontFamily = FontFamily.Monospace,
+                    fontSize = 24.sp,
+                    fontFamily = CherryBombOneFamily,
                     color = TextPrimary
                 )
             }
@@ -80,88 +87,69 @@ fun CollagePreviewScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // 2. Stamp Grid Layout (Top 3 stamps + Bottom 2 stamps for 5 people)
-        val clusters = result.clusters
-        if (clusters.isNotEmpty()) {
-            // First Row (up to 3 stamps)
-            val firstRowCount = minOf(3, clusters.size)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+        // 2. High-Res Canvas Collage Poster Preview
+        Box(
+            modifier = Modifier.fillMaxWidth(),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.92f)
+                    .aspectRatio(9f / 14.5f)
+                    .shadow(10.dp, RoundedCornerShape(14.dp))
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color.White)
+                    .border(3.dp, BrutalBorder, RoundedCornerShape(14.dp))
+                    .padding(6.dp)
             ) {
-                for (i in 0 until firstRowCount) {
-                    val cluster = clusters[i]
-                    val rot = if (i % 2 == 0) -2f else 2f
-                    Box(modifier = Modifier.weight(1f)) {
-                        StampCard(
-                            imageModel = cluster.representativeShot.generousCropBitmap ?: cluster.representativeShot.alignedCropBitmap,
-                            label = cluster.personLabel,
-                            badgeText = "",
-                            rotation = rot,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
+                val collageBmp = result.collageBitmap
+                if (collageBmp != null) {
+                    Image(
+                        bitmap = collageBmp.asImageBitmap(),
+                        contentDescription = "Collage Poster Preview",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize()
+                    )
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // Second Row (remaining stamps)
-            if (clusters.size > 3) {
-                val remainingCount = clusters.size - 3
-                Row(
-                    modifier = Modifier.fillMaxWidth(if (remainingCount == 2) 0.72f else 1f),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    for (i in 3 until clusters.size) {
-                        val cluster = clusters[i]
-                        val rot = if (i % 2 == 0) 2f else -2f
-                        Box(modifier = Modifier.weight(1f)) {
-                            StampCard(
-                                imageModel = cluster.representativeShot.generousCropBitmap ?: cluster.representativeShot.alignedCropBitmap,
-                                label = cluster.personLabel,
-                                badgeText = "",
-                                rotation = rot,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-                    }
-                }
-            }
+            // Pink washi tape holding top of collage preview
+            WashiTapeDecoration(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .offset(y = (-10).dp),
+                isPink = true,
+                rotation = -3f
+            )
         }
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // 3. Purple Caption Sticky Note
-        Box(modifier = Modifier.fillMaxWidth()) {
-            BrutalCard(
-                backgroundColor = CardPurple,
-                rotation = -0.8f,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = "Best shots.\nHappy faces.\nMemories together. \uD83D\uDE42",
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace,
-                    lineHeight = 22.sp,
-                    color = TextPrimary
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        // 4. Action Buttons
+        // 3. Action Buttons: SAVE TO GALLERY, SHARE COLLAGE, VIEW BREAKDOWN
         BrutalButton(
-            text = "SAVE & SHARE COLLAGE",
+            text = "SAVE TO GALLERY",
             onClick = {
-                val bmp = result.collageBitmap
-                if (bmp != null) {
-                    onSaveAndShare(bmp)
+                result.collageBitmap?.let { bmp ->
+                    onSaveToGallery(bmp)
+                    Toast.makeText(context, "Collage saved to Photos / Gallery!", Toast.LENGTH_SHORT).show()
                 }
             },
             backgroundColor = CardGreen,
+            trailingIcon = {
+                Icon(Icons.Default.Download, contentDescription = null, tint = TextPrimary)
+            }
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        BrutalButton(
+            text = "SHARE COLLAGE",
+            onClick = {
+                result.collageBitmap?.let { bmp ->
+                    onShareCollage(bmp)
+                }
+            },
+            backgroundColor = CardYellow,
             trailingIcon = {
                 Icon(Icons.Default.Share, contentDescription = null, tint = TextPrimary)
             }
@@ -172,9 +160,9 @@ fun CollagePreviewScreen(
         BrutalButton(
             text = "VIEW BREAKDOWN",
             onClick = onViewBreakdown,
-            backgroundColor = CardYellow,
+            backgroundColor = CardWhite,
             trailingIcon = {
-                Icon(Icons.Default.List, contentDescription = null, tint = TextPrimary)
+                Icon(Icons.AutoMirrored.Filled.List, contentDescription = null, tint = TextPrimary)
             }
         )
 

@@ -17,11 +17,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iykyk.assignment.domain.model.AnalysisResult
@@ -60,9 +57,8 @@ fun ResultsScreen(
                 ) {
                     Text(
                         text = "RESULTS",
-                        fontSize = 28.sp,
-                        fontWeight = FontWeight.Black,
-                        fontFamily = FontFamily.SansSerif,
+                        fontSize = 32.sp,
+                        fontFamily = CherryBombOneFamily,
                         color = TextPrimary
                     )
                     HeartDoodle()
@@ -95,18 +91,16 @@ fun ResultsScreen(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
                             text = "UNIQUE PEOPLE",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Black,
-                            fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp,
+                            fontFamily = GoogleSansFamily,
                             color = TextPrimary
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
                         val countStr = String.format("%02d", result.totalUniquePeople)
                         Text(
                             text = countStr,
-                            fontSize = 44.sp,
-                            fontWeight = FontWeight.Black,
-                            fontFamily = FontFamily.Monospace,
+                            fontSize = 42.sp,
+                            fontFamily = CherryBombOneFamily,
                             color = TextPrimary
                         )
                     }
@@ -122,20 +116,17 @@ fun ResultsScreen(
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            text = "TOTAL\nAPPEARANCES",
+                            text = "TOTAL APPEARANCES",
                             fontSize = 11.sp,
-                            fontWeight = FontWeight.Black,
-                            fontFamily = FontFamily.Monospace,
-                            color = TextPrimary,
-                            lineHeight = 13.sp
+                            fontFamily = GoogleSansFamily,
+                            color = TextPrimary
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         val appStr = String.format("%02d", result.totalAppearances)
                         Text(
                             text = appStr,
-                            fontSize = 44.sp,
-                            fontWeight = FontWeight.Black,
-                            fontFamily = FontFamily.Monospace,
+                            fontSize = 42.sp,
+                            fontFamily = CherryBombOneFamily,
                             color = TextPrimary
                         )
                     }
@@ -152,9 +143,8 @@ fun ResultsScreen(
         ) {
             Text(
                 text = "PEOPLE FOUND",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Black,
-                fontFamily = FontFamily.Monospace,
+                fontSize = 16.sp,
+                fontFamily = CherryBombOneFamily,
                 color = TextPrimary
             )
 
@@ -204,8 +194,7 @@ fun ResultsScreen(
                             Text(
                                 text = chipText,
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.Black,
-                                fontFamily = FontFamily.Monospace,
+                                fontFamily = GoogleSansFamily,
                                 color = TextPrimary
                             )
                         }
@@ -224,10 +213,9 @@ fun ResultsScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = "Great!  unique people found with  total appearances.",
+                    text = "Great!  unique people found with  total appearances. \uD83D\uDE42",
                     fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = GoogleSansFamily,
                     color = TextPrimary
                 )
             }

@@ -1,4 +1,4 @@
-﻿package com.iykyk.assignment
+package com.iykyk.assignment
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -65,7 +65,12 @@ class MainActivity : ComponentActivity() {
                             is ScreenState.CollagePreview -> {
                                 CollagePreviewScreen(
                                     result = state.result,
-                                    onSaveAndShare = { bitmap ->
+                                    onSaveToGallery = { bitmap ->
+                                        viewModel.saveAndShareCollage(bitmap) {
+                                            // Saved to gallery
+                                        }
+                                    },
+                                    onShareCollage = { bitmap ->
                                         viewModel.saveAndShareCollage(bitmap) {
                                             val shareIntent = viewModel.getShareIntent(bitmap)
                                             startActivity(shareIntent)

@@ -1,7 +1,5 @@
 ﻿package com.iykyk.assignment.ui.screens
 
-import android.content.Intent
-import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -22,8 +20,6 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iykyk.assignment.domain.model.AnalysisResult
@@ -47,7 +43,7 @@ fun CollageSavedScreen(
     ) {
         Spacer(modifier = Modifier.height(28.dp))
 
-        // 1. Green Header: "COLLAGE SAVED! ✨"
+        // 1. Green Header: "COLLAGE SAVED! ✨" in Cherry Bomb One
         Box(modifier = Modifier.fillMaxWidth()) {
             BrutalCard(
                 backgroundColor = CardGreen,
@@ -61,9 +57,8 @@ fun CollageSavedScreen(
                 ) {
                     Text(
                         text = "COLLAGE SAVED! ✨",
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Black,
-                        fontFamily = FontFamily.SansSerif,
+                        fontSize = 24.sp,
+                        fontFamily = CherryBombOneFamily,
                         color = TextPrimary
                     )
                 }
@@ -88,12 +83,12 @@ fun CollageSavedScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth(0.85f)
-                    .aspectRatio(9f / 14f)
+                    .aspectRatio(9f / 14.5f)
                     .shadow(8.dp, RoundedCornerShape(12.dp))
                     .clip(RoundedCornerShape(12.dp))
                     .background(Color.White)
                     .border(2.5.dp, BrutalBorder, RoundedCornerShape(12.dp))
-                    .padding(8.dp)
+                    .padding(6.dp)
             ) {
                 val collageBmp = result.collageBitmap
                 if (collageBmp != null) {
@@ -135,8 +130,7 @@ fun CollageSavedScreen(
                 Text(
                     text = "Your collage has been saved to your gallery. \uD83D\uDE42",
                     fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = GoogleSansFamily,
                     color = TextPrimary
                 )
             }
