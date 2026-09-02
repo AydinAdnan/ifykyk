@@ -61,9 +61,13 @@ class AppearanceSegmenter(
         }
 
         // Choose the single overall best representative shot across all appearances:
-        // Prefers solo unoccluded shots with high frontality and crisp sharpness
+        // 1. Filter to solo unoccluded shots if available
+        // 2. Filter to crisp, non-blurry shots
+        // 3. Select highest repScore (frontality, eyes open, smiling)
         val allFaces = validSegments.flatMap { it.detections }
-        val bestShot = allFaces.maxByOrNull { it.repScore } ?: allFaces.first()
+        val soloFaces = allFaces.filter { it.isSoloShot }.ifEmpty { allFaces }
+        val sharpFaces = soloFaces.filter { it.sharpnessScore >= 75f }.ifEmpty { soloFaces }
+        val bestShot = sharpFaces.maxByOrNull { it.repScore } ?: allFaces.maxByOrNull { it.repScore } ?: allFaces.first()
 
         return PersonCluster(
             id = personId,

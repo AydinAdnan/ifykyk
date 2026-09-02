@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Build
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.max
@@ -41,10 +42,16 @@ class VideoFrameExtractor(private val context: Context) {
             var frameIndex = 0
 
             while (currentTimestamp < durationMs) {
-                val frameBitmap = retriever.getFrameAtTime(
-                    currentTimestamp * 1000L,
-                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC
-                ) ?: retriever.getFrameAtTime(currentTimestamp * 1000L)
+                val timeUs = currentTimestamp * 1000L
+                val frameBitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                    try {
+                        retriever.getScaledFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST, 720, 1280)
+                    } catch (e: Exception) {
+                        retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
+                    }
+                } else {
+                    retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
+                } ?: retriever.getFrameAtTime(timeUs)
 
                 if (frameBitmap != null) {
                     val scaled = scaleDownIfLarge(frameBitmap, maxDim = 720)

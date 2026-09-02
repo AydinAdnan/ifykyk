@@ -152,7 +152,7 @@ fun ProcessingScreen(
                             )
                         }
 
-                        // Inner Face Avatar Crop
+                        // Inner Face Avatar Crop with smooth Crossfade
                         Box(
                             modifier = Modifier
                                 .size(118.dp)
@@ -161,19 +161,29 @@ fun ProcessingScreen(
                                 .border(2.5.dp, BrutalBorder, CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
-                            val faceBmp = progress.currentFaceBitmap
-                            if (faceBmp != null) {
-                                Image(
-                                    bitmap = faceBmp.asImageBitmap(),
-                                    contentDescription = "Active Face",
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            } else {
-                                Text(
-                                    text = "\uD83D\uDC64",
-                                    fontSize = 44.sp
-                                )
+                            androidx.compose.animation.Crossfade(
+                                targetState = progress.currentFaceBitmap,
+                                animationSpec = tween(300),
+                                label = "avatarCrossfade"
+                            ) { faceBmp ->
+                                if (faceBmp != null) {
+                                    Image(
+                                        bitmap = faceBmp.asImageBitmap(),
+                                        contentDescription = "Active Face",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else {
+                                    Box(
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "\uD83D\uDC64",
+                                            fontSize = 44.sp
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
