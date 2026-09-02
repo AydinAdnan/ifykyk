@@ -4,80 +4,84 @@ import com.iykyk.assignment.domain.model.AppearanceSegment
 import com.iykyk.assignment.domain.model.DetectedFace
 import com.iykyk.assignment.domain.model.PersonCluster
 
+/**
+ * Turns the tracklets belonging to one person into counted appearances and picks the shot
+ * that represents them.
+ */
 class AppearanceSegmenter(
+    /** Tracklets separated by less than this are treated as one interrupted appearance. */
     private val maxGapMs: Long = 1200L,
+    /** Appearances shorter than this are treated as detector noise, not as a moment. */
     private val minSegmentDurationMs: Long = 350L
 ) {
 
     /**
-     * Segments a cluster of face detections into continuous appearance periods
-     * and chooses the single best representative shot.
+     * Builds a person from their tracklets.
+     *
+     * An appearance is a continuous stretch of screen time. Tracklets already express that
+     * directly, so appearances are tracklets, merged across short gaps where the detector
+     * simply missed a frame or two.
      */
-    fun segmentPersonAppearances(
-        personId: Int,
-        detections: List<DetectedFace>
-    ): PersonCluster {
-        if (detections.isEmpty()) {
-            throw IllegalArgumentException("Detections cannot be empty for person ")
-        }
+    fun buildPerson(personId: Int, tracklets: List<Tracklet>): PersonCluster {
+        require(tracklets.isNotEmpty()) { "Person $personId has no tracklets" }
 
-        // Sort by timestamp ascending
-        val sorted = detections.sortedBy { it.timestampMs }
-        val rawSegments = mutableListOf<MutableList<DetectedFace>>()
-        var currentSegment = mutableListOf<DetectedFace>()
+        val ordered = tracklets.sortedBy { it.startMs }
+        val merged = mutableListOf<MutableList<Tracklet>>()
 
-        for (face in sorted) {
-            if (currentSegment.isEmpty()) {
-                currentSegment.add(face)
+        for (tracklet in ordered) {
+            val current = merged.lastOrNull()
+            if (current != null && tracklet.startMs - current.last().endMs <= maxGapMs) {
+                current.add(tracklet)
             } else {
-                val lastFace = currentSegment.last()
-                val gap = face.timestampMs - lastFace.timestampMs
-
-                // Tracking ID break or time gap break
-                val trackingChanged = (face.trackingId != null && lastFace.trackingId != null && face.trackingId != lastFace.trackingId)
-                if (gap > maxGapMs || (gap > 600L && trackingChanged)) {
-                    rawSegments.add(currentSegment)
-                    currentSegment = mutableListOf(face)
-                } else {
-                    currentSegment.add(face)
-                }
+                merged.add(mutableListOf(tracklet))
             }
         }
-        if (currentSegment.isNotEmpty()) {
-            rawSegments.add(currentSegment)
+
+        val allSegments = merged.map { group ->
+            val detections = group.flatMap { it.detections }.sortedBy { it.timestampMs }
+            AppearanceSegment(
+                startTimeMs = detections.first().timestampMs,
+                endTimeMs = detections.last().timestampMs,
+                detections = detections
+            )
         }
 
-        // Filter out whip-pan noise segments (unless it's the only segment)
-        val validSegments = rawSegments.map { faceList ->
-            val start = faceList.first().timestampMs
-            val end = faceList.last().timestampMs
-            AppearanceSegment(start, end, faceList)
-        }.filter { segment ->
-            segment.durationMs >= minSegmentDurationMs || rawSegments.size == 1
-        }.ifEmpty {
-            // If all were strictly short, keep the longest one
-            val longest = rawSegments.maxByOrNull { it.last().timestampMs - it.first().timestampMs } ?: rawSegments.first()
-            listOf(AppearanceSegment(longest.first().timestampMs, longest.last().timestampMs, longest))
-        }
+        // Drop momentary flickers, but never report a person as having zero appearances.
+        val segments = allSegments
+            .filter { it.durationMs >= minSegmentDurationMs }
+            .ifEmpty { listOf(allSegments.maxByOrNull { it.durationMs } ?: allSegments.first()) }
 
-        // Choose the single overall best representative shot across all appearances:
-        // 1. Strict Solo Preference: Never pick a group crop if a solo portrait exists
-        // 2. Strict Sharpness Preference: Never pick motion-blurred faces
-        // 3. Score Frontality, Smile, and Eyes Open
-        val allFaces = validSegments.flatMap { it.detections }
-        val soloFaces = allFaces.filter { it.isSoloShot && it.otherFaceBoxesInFrame.size <= 1 }.ifEmpty { allFaces }
-        val nonBlurFaces = soloFaces.filter { it.sharpnessScore >= 80f }.ifEmpty {
-            soloFaces.filter { it.sharpnessScore >= 50f }.ifEmpty { soloFaces }
-        }
-        val bestShot = nonBlurFaces.maxByOrNull { it.repScore } ?: soloFaces.maxByOrNull { it.repScore } ?: allFaces.first()
-
+        val candidates = segments.flatMap { it.detections }
         return PersonCluster(
             id = personId,
             personLabel = "Person $personId",
-            appearanceCount = validSegments.size,
-            appearances = validSegments,
-            representativeShot = bestShot,
+            appearanceCount = segments.size,
+            appearances = segments,
+            representativeShot = RepresentativeShotSelector.select(candidates),
             colorIndex = (personId - 1) % 5
         )
+    }
+
+    /**
+     * Segments a flat list of detections for one person. Kept for callers and tests that
+     * work with detections rather than tracklets; timestamps alone decide the boundaries.
+     */
+    fun segmentPersonAppearances(personId: Int, detections: List<DetectedFace>): PersonCluster {
+        require(detections.isNotEmpty()) { "Person $personId has no detections" }
+
+        val sorted = detections.sortedBy { it.timestampMs }
+        val runs = mutableListOf<MutableList<DetectedFace>>()
+
+        for (face in sorted) {
+            val current = runs.lastOrNull()
+            if (current != null && face.timestampMs - current.last().timestampMs <= maxGapMs) {
+                current.add(face)
+            } else {
+                runs.add(mutableListOf(face))
+            }
+        }
+
+        val tracklets = runs.mapIndexed { index, run -> Tracklet(index, run) }
+        return buildPerson(personId, tracklets)
     }
 }

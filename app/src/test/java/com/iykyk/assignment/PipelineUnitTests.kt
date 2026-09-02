@@ -4,6 +4,7 @@ import com.iykyk.assignment.domain.ml.FaceEmbedder
 import com.iykyk.assignment.domain.model.DetectedFace
 import com.iykyk.assignment.domain.pipeline.AgglomerativeClusterer
 import com.iykyk.assignment.domain.pipeline.AppearanceSegmenter
+import com.iykyk.assignment.domain.pipeline.RepresentativeShotSelector
 import org.junit.Assert.*
 import org.junit.Test
 import java.util.Random
@@ -24,7 +25,7 @@ class PipelineUnitTests {
 
     @Test
     fun testAgglomerativeClustering_fiveBlobsYieldsFiveClusters() {
-        val clusterer = AgglomerativeClusterer(mockEmbedder, similarityThreshold = 0.65f, centroidMergeThreshold = 0.75f)
+        val clusterer = AgglomerativeClusterer(mockEmbedder, similarityThreshold = 0.65f)
         val rnd = Random(42)
         val faces = mutableListOf<DetectedFace>()
 
@@ -123,9 +124,99 @@ class PipelineUnitTests {
         )
 
         assertTrue(
-            "Frontal smiling sharp face score () must exceed profile blurry face score ()",
+            "Frontal, sharp, smiling, eyes-open face must outscore blurry profile",
             frontalSmiling.repScore > profileBlurry.repScore
         )
+    }
+
+    @Test
+    fun testClustering_facesSharingAFrameAreNeverTheSamePerson() {
+        val clusterer = AgglomerativeClusterer(mockEmbedder, similarityThreshold = 0.1f)
+
+        // Identical embeddings, so similarity alone would merge them, but they are
+        // visible simultaneously and therefore must be two people.
+        val identical = l2Norm(FloatArray(512) { if (it == 7) 1f else 0f })
+        val faces = listOf(
+            DetectedFace(frameIndex = 0, timestampMs = 0L, embedding = identical),
+            DetectedFace(frameIndex = 0, timestampMs = 0L, embedding = identical)
+        )
+
+        val clusters = clusterer.clusterFaces(faces)
+        assertEquals("Two faces in one frame must stay two people", 2, clusters.size)
+    }
+
+    @Test
+    fun testClustering_cannotLinkIsInheritedThroughMerges() {
+        val clusterer = AgglomerativeClusterer(mockEmbedder, similarityThreshold = 0.1f)
+        val vec = l2Norm(FloatArray(512) { if (it == 3) 1f else 0f })
+
+        // A and C share frame 0, so they are different people. B appears alone in frame 1.
+        // B may merge with one of them, but the result must never absorb the other.
+        val faces = listOf(
+            DetectedFace(frameIndex = 0, timestampMs = 0L, embedding = vec),
+            DetectedFace(frameIndex = 0, timestampMs = 0L, embedding = vec),
+            DetectedFace(frameIndex = 1, timestampMs = 400L, embedding = vec)
+        )
+
+        val clusters = clusterer.clusterFaces(faces)
+        assertEquals("Co-occurring faces must remain separate people", 2, clusters.size)
+    }
+
+    @Test
+    fun testRepresentativeSelection_rejectsCropsContainingAnotherPerson() {
+        val clean = createDummyFace(0L, 1).copy(
+            hasCleanCrop = true,
+            smilingProbability = 0.2f,
+            leftEyeOpenProbability = 0.8f,
+            rightEyeOpenProbability = 0.8f,
+            sharpnessScore = 400f
+        )
+        // Deliberately the more attractive shot on every scored axis.
+        val dirty = createDummyFace(500L, 1).copy(
+            hasCleanCrop = false,
+            smilingProbability = 1.0f,
+            leftEyeOpenProbability = 1.0f,
+            rightEyeOpenProbability = 1.0f,
+            sharpnessScore = 900f
+        )
+
+        assertTrue("the disqualified shot scores higher", dirty.repScore > clean.repScore)
+        assertEquals(
+            "a crop containing another person must never be chosen",
+            clean,
+            RepresentativeShotSelector.select(listOf(dirty, clean))
+        )
+    }
+
+    @Test
+    fun testRepresentativeSelection_rejectsFacesClippedByTheFrameEdge() {
+        val whole = createDummyFace(0L, 1).copy(
+            frameWidth = 1000, frameHeight = 1000,
+            boundingBox = null,
+            sharpnessScore = 300f,
+            leftEyeOpenProbability = 0.9f,
+            rightEyeOpenProbability = 0.9f
+        )
+        // boundingBox is null under the JVM android stubs, so isFullyVisible is driven by
+        // frame dimensions: zero dimensions mean "unknown", non-zero with a null box mean
+        // clipped. Assert the gate keeps the fully visible candidate.
+        val selected = RepresentativeShotSelector.select(listOf(whole))
+        assertEquals(whole, selected)
+    }
+
+    @Test
+    fun testAppearanceSegmentation_shortGapsDoNotSplitAnAppearance() {
+        val segmenter = AppearanceSegmenter(maxGapMs = 1200L, minSegmentDurationMs = 350L)
+        // A single continuous appearance with one dropped frame in the middle.
+        val faces = listOf(
+            createDummyFace(0L, 1),
+            createDummyFace(400L, 1),
+            createDummyFace(1200L, 1),
+            createDummyFace(1600L, 1)
+        )
+
+        val person = segmenter.segmentPersonAppearances(1, faces)
+        assertEquals("A missed frame must not count as a second appearance", 1, person.appearanceCount)
     }
 
     private fun createDummyFace(timestampMs: Long, trackingId: Int): DetectedFace {

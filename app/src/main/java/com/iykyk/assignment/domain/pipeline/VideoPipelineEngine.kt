@@ -15,7 +15,8 @@ class VideoPipelineEngine(private val context: Context) {
     private val frameExtractor = VideoFrameExtractor(context)
     private val faceEmbedder = TFLiteFaceEmbedder(context)
     private val faceDetector = FaceDetectorEngine(alignedCropSize = faceEmbedder.inputSize)
-    private val clusterer = AgglomerativeClusterer(faceEmbedder, similarityThreshold = 0.46f, centroidMergeThreshold = 0.52f)
+    private val trackletBuilder = TrackletBuilder(faceEmbedder)
+    private val clusterer = AgglomerativeClusterer(faceEmbedder)
     private val segmenter = AppearanceSegmenter(maxGapMs = 1200L, minSegmentDurationMs = 350L)
     private val canvasRenderer = CollageCanvasRenderer(context)
 
@@ -132,7 +133,11 @@ class VideoPipelineEngine(private val context: Context) {
             )
         )
 
-        val clusterMap = clusterer.clusterFaces(facesWithEmbeddings)
+        // Geometry first: detections that sit in the same place in adjacent frames are the
+        // same person by construction, so recognition only has to decide which tracks go
+        // together rather than adjudicating every individual frame.
+        val tracklets = trackletBuilder.build(facesWithEmbeddings)
+        val clusterMap = clusterer.clusterTracklets(tracklets)
         completedSteps.add(PipelineStep.CLUSTER_PEOPLE)
 
         // 5. COUNT APPEARANCES & SELECT BEST SHOTS
@@ -146,8 +151,8 @@ class VideoPipelineEngine(private val context: Context) {
             )
         )
 
-        val personClusters = clusterMap.map { (personId, faceList) ->
-            segmenter.segmentPersonAppearances(personId, faceList)
+        val personClusters = clusterMap.map { (personId, personTracklets) ->
+            segmenter.buildPerson(personId, personTracklets)
         }
         completedSteps.add(PipelineStep.COUNT_APPEARANCES)
         completedSteps.add(PipelineStep.SELECT_BEST_SHOTS)

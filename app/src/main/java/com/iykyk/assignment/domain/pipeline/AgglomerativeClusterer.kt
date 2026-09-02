@@ -2,42 +2,63 @@ package com.iykyk.assignment.domain.pipeline
 
 import com.iykyk.assignment.domain.ml.FaceEmbedder
 import com.iykyk.assignment.domain.model.DetectedFace
-import kotlin.math.sqrt
 
+/**
+ * Groups tracklets into people.
+ *
+ * Two changes matter relative to clustering raw detections. Identity decisions are made on
+ * quality-weighted tracklet centroids rather than on single frames, so one blurred or
+ * half-turned face can no longer split a person or merge two. And the "two faces visible
+ * at once cannot be the same person" rule is enforced as a hard cannot-link constraint
+ * that is inherited through merges: previously it was only checked between the two
+ * clusters being merged, so A could merge with B and then the combined cluster could merge
+ * with C even when C co-occurred with A.
+ */
 class AgglomerativeClusterer(
     private val embedder: FaceEmbedder,
-    private val similarityThreshold: Float = 0.46f,
-    private val centroidMergeThreshold: Float = 0.52f
+    /**
+     * Cosine similarity above which two groups of tracklets are the same person.
+     *
+     * Calibrated for L2-normalised FaceNet embeddings produced with correct prewhitening;
+     * same-person pairs typically land above 0.6 and different-person pairs below 0.35.
+     * The old 0.46 / 0.52 pair was compensating for a broken normalisation that pushed
+     * every face toward the middle of the space.
+     */
+    private val similarityThreshold: Float = 0.55f,
+    /** Minimum recognitionQuality for a detection to contribute to identity. */
+    private val minRecognitionQuality: Float = 0.22f
 ) {
 
     /**
-     * Clusters detected faces into unique individuals using a constrained agglomerative strategy.
+     * Clusters tracklets and returns, per person id (1-based, most prominent first), the
+     * tracklets belonging to that person.
      */
-    fun clusterFaces(faces: List<DetectedFace>): Map<Int, List<DetectedFace>> {
-        if (faces.isEmpty()) return emptyMap()
-        if (faces.size == 1) return mapOf(1 to faces)
+    fun clusterTracklets(tracklets: List<Tracklet>): Map<Int, List<Tracklet>> {
+        if (tracklets.isEmpty()) return emptyMap()
 
-        // Pass 1: Initial Agglomerative clustering with average linkage and mutual frame exclusion
-        val clusters = mutableListOf<MutableList<DetectedFace>>()
-        for (face in faces) {
-            clusters.add(mutableListOf(face))
+        val embeddings = tracklets.associateWith { trackletEmbedding(it, minRecognitionQuality) }
+
+        // Tracklets with no usable face at all cannot be identified; they are still real
+        // appearances, so they are attached to their best match later rather than dropped.
+        val identifiable = tracklets.filter { embeddings.getValue(it).isNotEmpty() }
+        val unidentifiable = tracklets - identifiable.toSet()
+
+        if (identifiable.isEmpty()) {
+            return tracklets.mapIndexed { i, t -> (i + 1) to listOf(t) }.toMap()
         }
 
-        var improved = true
-        var loopCount = 0
-        while (improved && clusters.size > 1 && loopCount < 300) {
-            loopCount++
-            improved = false
+        var groups = identifiable.map { mutableListOf(it) }.toMutableList()
+
+        while (groups.size > 1) {
             var bestSim = -1f
             var mergeI = -1
             var mergeJ = -1
 
-            for (i in 0 until clusters.size) {
-                for (j in i + 1 until clusters.size) {
-                    // Two faces in the same frame CANNOT belong to the same person
-                    if (hasFrameOverlap(clusters[i], clusters[j])) continue
+            for (i in groups.indices) {
+                for (j in i + 1 until groups.size) {
+                    if (coOccur(groups[i], groups[j])) continue
 
-                    val sim = averageLinkageSimilarity(clusters[i], clusters[j])
+                    val sim = averageLinkage(groups[i], groups[j], embeddings)
                     if (sim > bestSim) {
                         bestSim = sim
                         mergeI = i
@@ -46,103 +67,77 @@ class AgglomerativeClusterer(
                 }
             }
 
-            if (bestSim >= similarityThreshold && mergeI != -1 && mergeJ != -1) {
-                val clusterJ = clusters.removeAt(mergeJ)
-                clusters[mergeI].addAll(clusterJ)
-                improved = true
-            }
+            if (bestSim < similarityThreshold || mergeI < 0) break
+
+            groups[mergeI].addAll(groups[mergeJ])
+            groups.removeAt(mergeJ)
         }
 
-        // Pass 2: Centroid merge pass to heal split clusters across lighting/angle changes
-        var merged = true
-        var mergeLoopCount = 0
-        while (merged && clusters.size > 1 && mergeLoopCount < 150) {
-            mergeLoopCount++
-            merged = false
-            var bestCentroidSim = -1f
-            var mergeI = -1
-            var mergeJ = -1
-
-            for (i in 0 until clusters.size) {
-                val centroidI = computeCentroid(clusters[i])
-                for (j in i + 1 until clusters.size) {
-                    if (hasFrameOverlap(clusters[i], clusters[j])) continue
-
-                    val centroidJ = computeCentroid(clusters[j])
-                    val sim = embedder.cosineSimilarity(centroidI, centroidJ)
-                    if (sim > bestCentroidSim) {
-                        bestCentroidSim = sim
-                        mergeI = i
-                        mergeJ = j
-                    }
-                }
+        // Attach unidentifiable tracklets to whichever person they overlap in time and
+        // space, otherwise leave them as their own person.
+        for (orphan in unidentifiable) {
+            val host = groups.firstOrNull { group ->
+                !coOccur(group, listOf(orphan)) &&
+                    group.any { timeOverlapsClosely(it, orphan) }
             }
-
-            if (bestCentroidSim >= centroidMergeThreshold && mergeI != -1 && mergeJ != -1) {
-                val clusterJ = clusters.removeAt(mergeJ)
-                clusters[mergeI].addAll(clusterJ)
-                merged = true
-            }
+            if (host != null) host.add(orphan) else groups.add(mutableListOf(orphan))
         }
 
-        // Keep all valid detected persons without discarding brief appearances
-        val validClusters = clusters.filter { cluster ->
-            cluster.isNotEmpty()
-        }.ifEmpty { clusters }
+        groups = groups.filter { it.isNotEmpty() }.toMutableList()
+        groups.sortWith(
+            compareByDescending<MutableList<Tracklet>> { group -> group.sumOf { it.detections.size } }
+                .thenBy { group -> group.minOf { it.startMs } }
+        )
 
-        // Sort clusters by number of faces descending (most prominent first)
-        val sortedClusters = validClusters.sortedByDescending { it.size }
-        val resultMap = mutableMapOf<Int, List<DetectedFace>>()
-        sortedClusters.forEachIndexed { index, faceList ->
-            resultMap[index + 1] = faceList
-        }
-
-        return resultMap
+        return groups.mapIndexed { index, group ->
+            (index + 1) to group.sortedBy { it.startMs }
+        }.toMap()
     }
 
-    private fun hasFrameOverlap(c1: List<DetectedFace>, c2: List<DetectedFace>): Boolean {
-        val frames1 = c1.map { it.frameIndex }.toSet()
-        for (face in c2) {
-            if (frames1.contains(face.frameIndex)) return true
-        }
-        return false
+    /**
+     * True when any tracklet of one group shares a frame with any tracklet of the other.
+     * Being visible simultaneously is proof of being different people, and because the
+     * check runs over whole groups the constraint survives every merge.
+     */
+    private fun coOccur(a: List<Tracklet>, b: List<Tracklet>): Boolean {
+        val framesA = HashSet<Int>()
+        for (tracklet in a) framesA.addAll(tracklet.frameIndices)
+        return b.any { tracklet -> tracklet.frameIndices.any { it in framesA } }
     }
 
-    private fun averageLinkageSimilarity(c1: List<DetectedFace>, c2: List<DetectedFace>): Float {
+    private fun averageLinkage(
+        a: List<Tracklet>,
+        b: List<Tracklet>,
+        embeddings: Map<Tracklet, FloatArray>
+    ): Float {
         var sum = 0f
         var count = 0
-        for (f1 in c1) {
-            for (f2 in c2) {
-                sum += embedder.cosineSimilarity(f1.embedding, f2.embedding)
+        for (ta in a) {
+            val ea = embeddings.getValue(ta)
+            if (ea.isEmpty()) continue
+            for (tb in b) {
+                val eb = embeddings.getValue(tb)
+                if (eb.isEmpty()) continue
+                sum += embedder.cosineSimilarity(ea, eb)
                 count++
             }
         }
-        return if (count > 0) sum / count else 0f
+        return if (count > 0) sum / count else -1f
     }
 
-    private fun computeCentroid(cluster: List<DetectedFace>): FloatArray {
-        if (cluster.isEmpty()) return FloatArray(0)
-        val dim = cluster.first().embedding.size
-        if (dim == 0) return FloatArray(0)
+    private fun timeOverlapsClosely(a: Tracklet, b: Tracklet): Boolean {
+        val gap = maxOf(a.startMs, b.startMs) - minOf(a.endMs, b.endMs)
+        return gap <= 1000L
+    }
 
-        val centroid = FloatArray(dim)
-        for (face in cluster) {
-            val emb = face.embedding
-            for (i in 0 until minOf(dim, emb.size)) {
-                centroid[i] += emb[i]
-            }
+    /**
+     * Convenience entry point that tracks and clusters in one step, returning detections
+     * grouped per person. Retained for tests and for callers that do not need tracklets.
+     */
+    fun clusterFaces(faces: List<DetectedFace>): Map<Int, List<DetectedFace>> {
+        val tracklets = TrackletBuilder(embedder).build(faces)
+        return clusterTracklets(tracklets).mapValues { (_, group) ->
+            group.flatMap { it.detections }.sortedBy { it.timestampMs }
         }
-        val n = cluster.size.toFloat()
-        for (i in 0 until dim) {
-            centroid[i] /= n
-        }
-
-        // L2 normalize centroid
-        var sumSq = 0.0
-        for (x in centroid) sumSq += (x * x).toDouble()
-        val norm = sqrt(sumSq).toFloat().coerceAtLeast(1e-8f)
-        for (i in 0 until dim) centroid[i] /= norm
-
-        return centroid
     }
 }
