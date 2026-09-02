@@ -1,4 +1,4 @@
-﻿package com.iykyk.assignment.domain.pipeline
+package com.iykyk.assignment.domain.pipeline
 
 import com.iykyk.assignment.domain.model.AppearanceSegment
 import com.iykyk.assignment.domain.model.DetectedFace
@@ -60,13 +60,14 @@ class AppearanceSegmenter(
             listOf(AppearanceSegment(longest.first().timestampMs, longest.last().timestampMs, longest))
         }
 
-        // Choose the single overall best representative shot across all appearances
+        // Choose the single overall best representative shot across all appearances:
+        // Prefers solo unoccluded shots with high frontality and crisp sharpness
         val allFaces = validSegments.flatMap { it.detections }
         val bestShot = allFaces.maxByOrNull { it.repScore } ?: allFaces.first()
 
         return PersonCluster(
             id = personId,
-            personLabel = "Person ",
+            personLabel = "Person $personId",
             appearanceCount = validSegments.size,
             appearances = validSegments,
             representativeShot = bestShot,

@@ -6,30 +6,35 @@ import kotlin.math.sqrt
 
 class AgglomerativeClusterer(
     private val embedder: FaceEmbedder,
-    private val similarityThreshold: Float = 0.52f,
-    private val centroidMergeThreshold: Float = 0.62f
+    private val similarityThreshold: Float = 0.48f,
+    private val centroidMergeThreshold: Float = 0.54f
 ) {
 
     /**
-     * Clusters detected faces into unique individuals using a two-pass agglomerative strategy.
+     * Clusters detected faces into unique individuals using a constrained agglomerative strategy.
      */
     fun clusterFaces(faces: List<DetectedFace>): Map<Int, List<DetectedFace>> {
         if (faces.isEmpty()) return emptyMap()
         if (faces.size == 1) return mapOf(1 to faces)
 
-        // Pass 1: Initial Agglomerative clustering with average linkage
+        // Pass 1: Initial Agglomerative clustering with average linkage and mutual frame exclusion
         val clusters = mutableListOf<MutableList<DetectedFace>>()
         for (face in faces) {
             clusters.add(mutableListOf(face))
         }
 
-        while (clusters.size > 1) {
+        var improved = true
+        while (improved && clusters.size > 1) {
+            improved = false
             var bestSim = -1f
             var mergeI = -1
             var mergeJ = -1
 
             for (i in 0 until clusters.size) {
                 for (j in i + 1 until clusters.size) {
+                    // Two faces in the same frame CANNOT belong to the same person
+                    if (hasFrameOverlap(clusters[i], clusters[j])) continue
+
                     val sim = averageLinkageSimilarity(clusters[i], clusters[j])
                     if (sim > bestSim) {
                         bestSim = sim
@@ -42,12 +47,11 @@ class AgglomerativeClusterer(
             if (bestSim >= similarityThreshold && mergeI != -1 && mergeJ != -1) {
                 val clusterJ = clusters.removeAt(mergeJ)
                 clusters[mergeI].addAll(clusterJ)
-            } else {
-                break
+                improved = true
             }
         }
 
-        // Pass 2: Centroid merge pass to heal split clusters across lighting changes
+        // Pass 2: Centroid merge pass to heal split clusters across lighting/angle changes
         var merged = true
         while (merged && clusters.size > 1) {
             merged = false
@@ -58,6 +62,8 @@ class AgglomerativeClusterer(
             for (i in 0 until clusters.size) {
                 val centroidI = computeCentroid(clusters[i])
                 for (j in i + 1 until clusters.size) {
+                    if (hasFrameOverlap(clusters[i], clusters[j])) continue
+
                     val centroidJ = computeCentroid(clusters[j])
                     val sim = embedder.cosineSimilarity(centroidI, centroidJ)
                     if (sim > bestCentroidSim) {
@@ -75,14 +81,28 @@ class AgglomerativeClusterer(
             }
         }
 
+        // Filter out accidental single-frame noise artifacts if larger real clusters exist
+        val maxClusterSize = clusters.maxOfOrNull { it.size } ?: 1
+        val minValidSize = if (maxClusterSize >= 4) 2 else 1
+        val filteredClusters = clusters.filter { it.size >= minValidSize }
+            .ifEmpty { clusters }
+
         // Sort clusters by number of faces descending (most seen first)
-        val sortedClusters = clusters.sortedByDescending { it.size }
+        val sortedClusters = filteredClusters.sortedByDescending { it.size }
         val resultMap = mutableMapOf<Int, List<DetectedFace>>()
         sortedClusters.forEachIndexed { index, faceList ->
             resultMap[index + 1] = faceList
         }
 
         return resultMap
+    }
+
+    private fun hasFrameOverlap(c1: List<DetectedFace>, c2: List<DetectedFace>): Boolean {
+        val frames1 = c1.map { it.frameIndex }.toSet()
+        for (face in c2) {
+            if (frames1.contains(face.frameIndex)) return true
+        }
+        return false
     }
 
     private fun averageLinkageSimilarity(c1: List<DetectedFace>, c2: List<DetectedFace>): Float {

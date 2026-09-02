@@ -1,4 +1,4 @@
-﻿package com.iykyk.assignment.domain.ml
+package com.iykyk.assignment.domain.ml
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -62,17 +62,42 @@ object FaceAlignmentHelper {
     }
 
     /**
-     * Generous crop around the face (adds 40% margin) for the final scrapbook stamp collage.
-     * Brief rule: no tight bounding-box crops.
+     * Generous crop around the face (adds ~35% margin) for the final scrapbook stamp collage.
+     * In group frames, bounds are strictly clamped to avoid including neighboring faces.
      */
-    fun cropGenerousFace(frame: Bitmap, box: Rect): Bitmap {
-        val marginX = (box.width() * 0.45f).toInt()
-        val marginY = (box.height() * 0.45f).toInt()
+    fun cropGenerousFace(frame: Bitmap, box: Rect, otherBoxes: List<Rect> = emptyList()): Bitmap {
+        var marginX = (box.width() * 0.35f).toInt()
+        var marginY = (box.height() * 0.35f).toInt()
 
-        val left = max(0, box.left - marginX)
-        val top = max(0, box.top - marginY)
-        val right = min(frame.width, box.right + marginX)
-        val bottom = min(frame.height, box.bottom + marginY)
+        var left = max(0, box.left - marginX)
+        var top = max(0, box.top - marginY)
+        var right = min(frame.width, box.right + marginX)
+        var bottom = min(frame.height, box.bottom + marginY)
+
+        // Avoid encroaching on other detected faces in the same frame
+        for (other in otherBoxes) {
+            if (other == box) continue
+            // If other face is to the right
+            if (other.left >= box.right) {
+                val midX = (box.right + other.left) / 2
+                right = min(right, midX)
+            }
+            // If other face is to the left
+            if (other.right <= box.left) {
+                val midX = (other.right + box.left) / 2
+                left = max(left, midX)
+            }
+            // If other face is below
+            if (other.top >= box.bottom) {
+                val midY = (box.bottom + other.top) / 2
+                bottom = min(bottom, midY)
+            }
+            // If other face is above
+            if (other.bottom <= box.top) {
+                val midY = (other.bottom + box.top) / 2
+                top = max(top, midY)
+            }
+        }
 
         val width = max(1, right - left)
         val height = max(1, bottom - top)

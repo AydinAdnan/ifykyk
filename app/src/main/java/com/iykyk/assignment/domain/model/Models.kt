@@ -15,6 +15,8 @@ data class DetectedFace(
     val alignedCropBitmap: Bitmap? = null,
     val generousCropBitmap: Bitmap? = null,
     val trackingId: Int? = null,
+    val isSoloShot: Boolean = true,
+    val otherFaceBoxesInFrame: List<Rect> = emptyList(),
     val leftEye: PointF? = null,
     val rightEye: PointF? = null,
     val nose: PointF? = null,
@@ -29,16 +31,24 @@ data class DetectedFace(
     val embedding: FloatArray = FloatArray(0)
 ) {
     /**
-     * Representative score:
-     * w1·frontality + w2·sharpness + w3·eyesOpen + w4·smile + w5·margin
+     * Google Photos "Top Shot" / "Best Take" scoring algorithm:
+     * - Hard penalties for motion blur and closed eyes
+     * - Strong preference for solo, unoccluded, frontal, smiling portraits
      */
     val repScore: Float
         get() {
-            val frontality = (1f - (Math.abs(headEulerY) / 60f + Math.abs(headEulerZ) / 45f)).coerceIn(0f, 1f)
-            val eyesOpen = Math.min(leftEyeOpenProbability, rightEyeOpenProbability).coerceIn(0f, 1f)
+            // Motion blur penalty: blurry faces should never be chosen
+            if (sharpnessScore < 50f) return 0.05f
+
+            val frontality = (1f - (Math.abs(headEulerY) / 50f + Math.abs(headEulerZ) / 35f)).coerceIn(0f, 1f)
+            val minEyeOpen = Math.min(leftEyeOpenProbability, rightEyeOpenProbability).coerceIn(0f, 1f)
+            val eyesOpenScore = if (minEyeOpen < 0.35f) minEyeOpen * 0.2f else minEyeOpen
             val smile = smilingProbability.coerceIn(0f, 1f)
-            val sharpness = (sharpnessScore / 500f).coerceIn(0f, 1f)
-            return (0.30f * frontality) + (0.25f * sharpness) + (0.20f * eyesOpen) + (0.15f * smile) + 0.10f
+            val sharpness = (sharpnessScore / 350f).coerceIn(0.1f, 1f)
+            val soloBonus = if (isSoloShot) 0.35f else 0.0f
+            val sizeBonus = ((boundingBox?.width() ?: 100) / 400f).coerceIn(0f, 0.25f)
+
+            return (0.30f * frontality) + (0.25f * sharpness) + (0.20f * eyesOpenScore) + (0.15f * smile) + soloBonus + sizeBonus
         }
 }
 

@@ -1,4 +1,4 @@
-﻿package com.iykyk.assignment.domain.ml
+package com.iykyk.assignment.domain.ml
 
 import android.graphics.Bitmap
 import com.google.mlkit.vision.common.InputImage
@@ -36,13 +36,18 @@ class FaceDetectorEngine {
             .addOnSuccessListener { mlkitFaces ->
                 val validFaces = mutableListOf<DetectedFace>()
 
-                for (face in mlkitFaces) {
+                val rawValidFaces = mlkitFaces.filter { face ->
                     val box = face.boundingBox
-                    // Junk gate 1: ignore tiny face bounding boxes (<60px)
-                    if (box.width() < 60 || box.height() < 60) continue
+                    box.width() >= 60 && box.height() >= 60 &&
+                    box.right > 0 && box.bottom > 0 &&
+                    box.left < frameBitmap.width && box.top < frameBitmap.height
+                }
 
-                    // Junk gate 2: ensure box overlaps reasonably with frame bounds
-                    if (box.right <= 0 || box.bottom <= 0 || box.left >= frameBitmap.width || box.top >= frameBitmap.height) continue
+                val allBoxesInFrame = rawValidFaces.map { it.boundingBox }
+                val isSolo = rawValidFaces.size == 1
+
+                for (face in rawValidFaces) {
+                    val box = face.boundingBox
 
                     // Extract landmarks
                     val leftEye = face.getLandmark(FaceLandmark.LEFT_EYE)?.position
@@ -53,10 +58,13 @@ class FaceDetectorEngine {
 
                     // Crops
                     val aligned112 = FaceAlignmentHelper.alignFace112(frameBitmap, box, leftEye, rightEye)
-                    val generousCrop = FaceAlignmentHelper.cropGenerousFace(frameBitmap, box)
+                    val generousCrop = FaceAlignmentHelper.cropGenerousFace(frameBitmap, box, allBoxesInFrame)
 
                     // Junk gate 3: Laplacian sharpness
                     val sharpness = FaceAlignmentHelper.computeSharpness(aligned112)
+
+                    // Skip extreme motion-blurred frames (junk-gate)
+                    if (sharpness < 65f) continue
 
                     val detectedFace = DetectedFace(
                         frameIndex = frameIndex,
@@ -66,6 +74,8 @@ class FaceDetectorEngine {
                         alignedCropBitmap = aligned112,
                         generousCropBitmap = generousCrop,
                         trackingId = face.trackingId,
+                        isSoloShot = isSolo,
+                        otherFaceBoxesInFrame = allBoxesInFrame,
                         leftEye = leftEye,
                         rightEye = rightEye,
                         nose = nose,
