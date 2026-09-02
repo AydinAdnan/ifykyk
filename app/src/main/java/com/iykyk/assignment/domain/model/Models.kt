@@ -89,13 +89,16 @@ data class DetectedFace(
             val eyesTerm = if (eyesOpen < 0.35f) eyesOpen * 0.2f else eyesOpen
             val smile = smilingProbability.coerceIn(0f, 1f)
             val sizeTerm = (faceWidthPx / 320f).coerceIn(0f, 1f)
-            val soloBonus = if (isSoloShot) 0.15f else 0f
+            val soloBonus = if (isSoloShot) 0.08f else 0f
 
-            return (0.28f * frontality) +
-                (0.26f * sharpnessQuality) +
-                (0.20f * eyesTerm) +
-                (0.12f * smile) +
-                (0.14f * sizeTerm) +
+            // Sharpness carries the most weight. Previously the size term and the solo
+            // bonus together outweighed it, so a large blurred face beat a crisp smaller
+            // one - and blur is the flaw a viewer notices first in a finished collage.
+            return (0.38f * sharpnessQuality) +
+                (0.24f * frontality) +
+                (0.18f * eyesTerm) +
+                (0.10f * smile) +
+                (0.08f * sizeTerm) +
                 soloBonus
         }
 

@@ -219,6 +219,58 @@ class PipelineUnitTests {
         assertEquals("A missed frame must not count as a second appearance", 1, person.appearanceCount)
     }
 
+    @Test
+    fun testRanking_putsCleanUnclippedCandidatesAheadOfDisqualifiedOnes() {
+        // The refiner walks this order when a higher-resolution decode disproves the top
+        // pick, so candidates that failed a gate must never sort above ones that passed.
+        val crowded = createDummyFace(0L, 1).copy(
+            hasCleanCrop = false, sharpnessScore = 900f,
+            smilingProbability = 1f, leftEyeOpenProbability = 1f, rightEyeOpenProbability = 1f
+        )
+        val clean = createDummyFace(500L, 1).copy(
+            hasCleanCrop = true, sharpnessScore = 300f,
+            leftEyeOpenProbability = 0.8f, rightEyeOpenProbability = 0.8f
+        )
+
+        val ranked = RepresentativeShotSelector.rank(listOf(crowded, clean))
+        assertEquals("clean candidate must rank first", clean, ranked.first())
+        assertEquals("every candidate must remain available as a fallback", 2, ranked.size)
+    }
+
+    @Test
+    fun testRanking_isConsistentWithSelect() {
+        val faces = listOf(
+            createDummyFace(0L, 1).copy(hasCleanCrop = false, sharpnessScore = 800f),
+            createDummyFace(500L, 1).copy(hasCleanCrop = true, sharpnessScore = 500f),
+            createDummyFace(900L, 1).copy(hasCleanCrop = true, sharpnessScore = 120f)
+        )
+
+        assertEquals(
+            "rank() must agree with select() on the winner",
+            RepresentativeShotSelector.select(faces),
+            RepresentativeShotSelector.rank(faces).first()
+        )
+    }
+
+    @Test
+    fun testRepScore_sharpFaceBeatsLargerBlurredOne() {
+        // A big, smiling, solo but motion-blurred face used to outscore a crisp one,
+        // because the size term and solo bonus together outweighed sharpness.
+        val sharpSmall = createDummyFace(0L, 1).copy(
+            sharpnessScore = 900f, isSoloShot = false,
+            leftEyeOpenProbability = 0.9f, rightEyeOpenProbability = 0.9f
+        )
+        val blurredLarge = createDummyFace(500L, 1).copy(
+            sharpnessScore = 25f, isSoloShot = true, smilingProbability = 1f,
+            leftEyeOpenProbability = 0.9f, rightEyeOpenProbability = 0.9f
+        )
+
+        assertTrue(
+            "sharpness must dominate size and solo bonuses",
+            sharpSmall.repScore > blurredLarge.repScore
+        )
+    }
+
     private fun createDummyFace(timestampMs: Long, trackingId: Int): DetectedFace {
         return DetectedFace(
             frameIndex = 0,

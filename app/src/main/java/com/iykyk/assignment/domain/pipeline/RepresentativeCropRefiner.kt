@@ -1,26 +1,29 @@
 package com.iykyk.assignment.domain.pipeline
 
+import android.graphics.Bitmap
 import android.graphics.Rect
-import android.net.Uri
 import com.iykyk.assignment.domain.ml.FaceAlignmentHelper
 import com.iykyk.assignment.domain.ml.FaceDetectorEngine
+import com.iykyk.assignment.domain.model.DetectedFace
 import com.iykyk.assignment.domain.model.PersonCluster
 import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Re-cuts each person's chosen shot from a full-resolution decode of its source frame.
+ * Settles each person's representative shot against a higher-resolution decode of its
+ * source frame, and re-picks when that decode disproves the choice.
  *
- * The analysis pass runs at a resolution chosen so that a whole video can be swept without
- * exhausting memory, which is a different constraint from the one that governs how good a
- * single tile can look. Since only one frame per person is ever displayed, those frames can
- * be decoded again at full resolution - a few seeks in total - and the tile stops being
- * limited by the analysis resolution.
+ * The sweep runs at a resolution chosen for throughput, and its verdicts inherit that
+ * limit. A background face 30px wide is invisible at sweep resolution, so the crop planner
+ * cannot avoid it and the shot is recorded as clean; motion blur is likewise easier to
+ * miss in a smaller frame. Both errors surface only here, where the frame is decoded
+ * larger.
  *
- * Detection is re-run on the high-resolution frame rather than simply rescaling the stored
- * box. It costs one detector call per person and it is what catches a neighbouring face
- * that was too small to resolve during the sweep, which is precisely the face that would
- * otherwise reappear inside the finished tile.
+ * The previous version detected exactly this situation and then kept the disproven shot
+ * anyway, falling back to the sweep-resolution crop - the very crop containing the person
+ * it had just discovered. Candidates are now tried in preference order until one survives
+ * verification, so a frame that turns out to hold two people, or to be blurred, is
+ * abandoned in favour of the person's next-best frame.
  */
 class RepresentativeCropRefiner(
     private val frameExtractor: VideoFrameExtractor,
@@ -28,46 +31,119 @@ class RepresentativeCropRefiner(
 ) {
 
     companion object {
-        /** Longest edge for the re-decoded frame. */
-        const val REFINE_FRAME_EDGE = 1920
+        /**
+         * Longest edge for the verification decode.
+         *
+         * Enough to resolve neighbours the sweep missed and to judge blur honestly, while
+         * staying cheap: detection cost scales with pixel count, and this runs a few times
+         * per person.
+         */
+        const val REFINE_FRAME_EDGE = 1280
 
-        /** Longest edge of the produced crop; comfortably above the collage tile size. */
-        const val CROP_MAX_EDGE = 1200
+        /** Longest edge of the produced crop; well above the collage tile size. */
+        const val CROP_MAX_EDGE = 900
+
+        /** How many candidate frames to try per person before settling. */
+        const val MAX_CANDIDATES = 4
 
         /** Minimum overlap for a high-resolution detection to be the same face. */
         private const val MIN_MATCH_IOU = 0.3f
+
+        /**
+         * Laplacian variance below which a face is rejected as blurred, measured on the
+         * verification decode. Absolute rather than relative: at this point the question
+         * is whether the tile will look sharp, not whether it is the best of a bad set.
+         */
+        private const val MIN_SHARPNESS = 90f
     }
 
-    suspend fun refine(videoUri: Uri, clusters: List<PersonCluster>): List<PersonCluster> =
-        clusters.map { cluster -> refineOne(videoUri, cluster) }
+    /** A verified candidate and the crop that verification produced. */
+    private data class Verified(
+        val shot: DetectedFace,
+        val crop: Bitmap,
+        val isClean: Boolean,
+        val sharpness: Float
+    ) {
+        val isAcceptable: Boolean get() = isClean && sharpness >= MIN_SHARPNESS
+    }
 
-    private suspend fun refineOne(videoUri: Uri, cluster: PersonCluster): PersonCluster {
-        val shot = cluster.representativeShot
-        val originalBox = shot.boundingBox ?: return cluster
-        if (shot.frameWidth <= 0 || shot.frameHeight <= 0) return cluster
+    suspend fun refine(
+        videoUri: android.net.Uri,
+        clusters: List<PersonCluster>,
+        rankedCandidates: (PersonCluster) -> List<DetectedFace>
+    ): List<PersonCluster> {
+        // One session for every person and every retry, rather than reopening the video
+        // for each decode.
+        return frameExtractor.withSession(videoUri) { session ->
+            clusters.map { cluster -> refineOne(session, cluster, rankedCandidates(cluster)) }
+        } ?: clusters
+    }
 
-        val frame = frameExtractor.decodeFrameAt(videoUri, shot.timestampMs, REFINE_FRAME_EDGE)
-            ?: return cluster
+    private suspend fun refineOne(
+        session: VideoFrameExtractor.Session,
+        cluster: PersonCluster,
+        candidates: List<DetectedFace>
+    ): PersonCluster {
+        var fallback: Verified? = null
+
+        for (candidate in candidates.take(MAX_CANDIDATES)) {
+            val verified = verify(session, candidate) ?: continue
+
+            if (verified.isAcceptable) {
+                fallback?.crop?.recycle()
+                return cluster.withShot(verified)
+            }
+
+            // Keep the least-bad attempt in case nothing verifies cleanly.
+            if (fallback == null || verified.score > fallback.score) {
+                fallback?.crop?.recycle()
+                fallback = verified
+            } else {
+                verified.crop.recycle()
+            }
+        }
+
+        return fallback?.let { cluster.withShot(it) } ?: cluster
+    }
+
+    /** Ranks partial failures so the fallback prefers a clean blurred shot over a crowded one. */
+    private val Verified.score: Float
+        get() = (if (isClean) 1000f else 0f) + min(sharpness, MIN_SHARPNESS)
+
+    private fun PersonCluster.withShot(verified: Verified): PersonCluster = copy(
+        representativeShot = verified.shot.copy(
+            generousCropBitmap = verified.crop,
+            hasCleanCrop = verified.isClean,
+            sharpnessScore = verified.sharpness
+        )
+    )
+
+    private suspend fun verify(
+        session: VideoFrameExtractor.Session,
+        shot: DetectedFace
+    ): Verified? {
+        val originalBox = shot.boundingBox ?: return null
+        if (shot.frameWidth <= 0 || shot.frameHeight <= 0) return null
+
+        // Exact seek: verification must judge the frame that was actually chosen, not the
+        // nearest keyframe, which may show something else entirely.
+        val frame = session.decodeAt(shot.timestampMs, REFINE_FRAME_EDGE, preferSync = false)
+            ?: return null
 
         return try {
-            if (frame.width <= shot.frameWidth) return cluster
-
             val scale = frame.width.toFloat() / shot.frameWidth
             val scaledBox = originalBox.scaled(scale, frame.width, frame.height)
 
             val detected = faceDetector.detectFacesInFrame(frame, shot.frameIndex, shot.timestampMs)
             val allBoxes = detected.mapNotNull { it.boundingBox }
 
-            // Prefer the high-resolution detection that lines up with the face we chose;
-            // fall back to the rescaled box when the re-decode landed on a nearby frame.
-            val targetBox = allBoxes.maxByOrNull { iou(it, scaledBox) }
+            val matched = allBoxes
+                .maxByOrNull { iou(it, scaledBox) }
                 ?.takeIf { iou(it, scaledBox) >= MIN_MATCH_IOU }
-                ?: scaledBox
+            val targetBox = matched ?: scaledBox
 
-            val neighbours = if (allBoxes.isEmpty()) {
+            val neighbours = allBoxes.ifEmpty {
                 shot.otherFaceBoxesInFrame.map { it.scaled(scale, frame.width, frame.height) }
-            } else {
-                allBoxes
             }
 
             val (crop, plan) = FaceAlignmentHelper.cropPortrait(
@@ -77,22 +153,14 @@ class RepresentativeCropRefiner(
                 maxEdge = CROP_MAX_EDGE
             )
 
-            // Only adopt the refined tile if it is at least as clean as the one we had.
-            if (!plan.isClean && shot.hasCleanCrop) {
-                crop.recycle()
-                return cluster
-            }
-
-            // The superseded crop is left to the collector rather than recycled: it may
-            // still be referenced by the progress UI that displayed it during the sweep.
-            cluster.copy(
-                representativeShot = shot.copy(
-                    generousCropBitmap = crop,
-                    hasCleanCrop = plan.isClean
-                )
+            Verified(
+                shot = shot,
+                crop = crop,
+                isClean = plan.isClean,
+                sharpness = FaceAlignmentHelper.computeSharpness(frame, targetBox)
             )
         } catch (e: Exception) {
-            cluster
+            null
         } finally {
             if (!frame.isRecycled) frame.recycle()
         }

@@ -16,6 +16,13 @@ data class ExtractedFrame(
     val bitmap: Bitmap
 )
 
+/** Outcome of a sampling sweep. */
+data class SweepResult(
+    val framesDelivered: Int,
+    val durationMs: Long,
+    val lastTimestampMs: Long
+)
+
 class VideoFrameExtractor(private val context: Context) {
 
     companion object {
@@ -27,136 +34,186 @@ class VideoFrameExtractor(private val context: Context) {
          * find secondary people at all. 720p puts a medium shot near 256px while costing
          * roughly half of what 1080p costs to decode and detect on.
          *
-         * Tile sharpness is no longer tied to this number: RepresentativeCropRefiner
-         * re-decodes the handful of chosen frames at full resolution.
+         * Tile sharpness is not tied to this number: RepresentativeCropRefiner re-decodes
+         * the handful of chosen frames at higher resolution.
          */
         const val MAX_FRAME_EDGE = 720
 
-        /** Upper bound on decoded frames, to keep memory and latency bounded. */
-        const val MAX_FRAMES = 90
+        /** Upper bound on frames handed to detection, to keep latency bounded. */
+        const val MAX_FRAMES = 48
 
         /** Lower bound, so very short clips still get dense sampling. */
-        const val MIN_INTERVAL_MS = 250L
-    }
+        const val MIN_INTERVAL_MS = 300L
 
-    /** Video duration in milliseconds, or null when it cannot be read. */
-    suspend fun readDurationMs(videoUri: Uri): Long? = withContext(Dispatchers.IO) {
-        val retriever = MediaMetadataRetriever()
-        try {
-            retriever.setDataSource(context, videoUri)
-            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
-        } catch (e: Exception) {
-            null
-        } finally {
-            try { retriever.release() } catch (e: Exception) { /* ignored */ }
-        }
+        /**
+         * Below this many distinct frames, keyframe-only sampling is considered to have
+         * collapsed and the sweep is retried decoding to exact timestamps.
+         */
+        private const val MIN_DISTINCT_FRAMES = 8
     }
 
     /**
-     * Streams frames at approximately [targetFps], capped at [MAX_FRAMES].
+     * An open handle on one video.
      *
-     * Frames are handed to [onFrame] one at a time and recycled immediately afterwards.
-     * Materialising every frame into a list is not viable at this resolution: 90 frames
-     * of 1080x1920 ARGB_8888 is roughly 745 MB, so consumers must extract what they need
-     * (crops, embeddings, metadata) inside the callback.
+     * MediaMetadataRetriever.setDataSource parses the container and is far from free, and
+     * the pipeline used to pay for it repeatedly: once to read the duration, once for the
+     * sweep, and once more per person during representative refinement. A session pays it
+     * once and hands out as many decodes as the caller needs.
+     */
+    class Session internal constructor(
+        private val retriever: MediaMetadataRetriever,
+        val durationMs: Long
+    ) {
+        /**
+         * @param preferSync seek to the nearest keyframe rather than decoding forward to
+         *   the exact timestamp. Keyframe seeks are dramatically cheaper - an exact seek
+         *   must decode every frame from the preceding keyframe to the target, so a sweep
+         *   of N samples can decode far more frames than the video even contains.
+         */
+        fun decodeAt(timestampMs: Long, maxEdge: Int, preferSync: Boolean): Bitmap? {
+            val timeUs = timestampMs * 1000L
+            val option = if (preferSync) {
+                MediaMetadataRetriever.OPTION_CLOSEST_SYNC
+            } else {
+                MediaMetadataRetriever.OPTION_CLOSEST
+            }
+
+            val raw = decodeScaled(timeUs, option, maxEdge)
+                ?: decodeScaled(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, maxEdge)
+                ?: return null
+
+            return scaleDownIfLarge(raw, maxEdge)
+        }
+
+        private fun decodeScaled(timeUs: Long, option: Int, maxEdge: Int): Bitmap? {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                try {
+                    retriever.getScaledFrameAtTime(timeUs, option, maxEdge, maxEdge)
+                        ?.let { return it }
+                } catch (e: Exception) {
+                    // fall through to the unscaled path
+                }
+            }
+            return try {
+                retriever.getFrameAtTime(timeUs, option)
+            } catch (e: Exception) {
+                null
+            }
+        }
+    }
+
+    /** Opens a session, runs [block], and always releases the retriever. */
+    suspend fun <T> withSession(videoUri: Uri, block: suspend (Session) -> T): T? =
+        withContext(Dispatchers.IO) {
+            val retriever = MediaMetadataRetriever()
+            try {
+                retriever.setDataSource(context, videoUri)
+                val durationMs = retriever
+                    .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                    ?.toLongOrNull() ?: 10_000L
+                block(Session(retriever, durationMs))
+            } catch (e: Exception) {
+                e.printStackTrace()
+                null
+            } finally {
+                try { retriever.release() } catch (e: Exception) { /* ignored */ }
+            }
+        }
+
+    /**
+     * Streams sampled frames at approximately [targetFps], capped at [MAX_FRAMES].
+     *
+     * Frames are handed to [onFrame] one at a time and recycled immediately afterwards:
+     * materialising a whole sweep would hold hundreds of megabytes of bitmaps at once.
+     *
+     * Sampling snaps to keyframes, which is far cheaper than decoding forward to exact
+     * timestamps. Because several requested times can then land on the same frame, and
+     * because a static shot repeats regardless, near-identical frames are dropped before
+     * they reach [onFrame] - detection on them costs full price and adds nothing. If a
+     * video has keyframes so sparse that this leaves too little to work with, the sweep is
+     * retried decoding to exact timestamps.
      */
     suspend fun forEachFrame(
         videoUri: Uri,
-        targetFps: Float = 3.0f,
+        targetFps: Float = 2.0f,
         onFrame: suspend (ExtractedFrame, Int) -> Unit
-    ): Int = withContext(Dispatchers.IO) {
-        val retriever = MediaMetadataRetriever()
-        var emitted = 0
+    ): SweepResult = withSession(videoUri) { session ->
+        val fast = sweep(session, targetFps, preferSync = true, onFrame = onFrame)
+        if (fast.framesDelivered >= MIN_DISTINCT_FRAMES || session.durationMs < 4_000L) {
+            fast
+        } else {
+            sweep(session, targetFps, preferSync = false, onFrame = onFrame)
+        }
+    } ?: SweepResult(0, 0L, 0L)
 
-        try {
-            retriever.setDataSource(context, videoUri)
-            val durationMs = retriever
-                .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-                ?.toLongOrNull() ?: 10_000L
+    private suspend fun sweep(
+        session: Session,
+        targetFps: Float,
+        preferSync: Boolean,
+        onFrame: suspend (ExtractedFrame, Int) -> Unit
+    ): SweepResult {
+        val durationMs = session.durationMs
+        val targetInterval = (1000f / targetFps).toLong().coerceAtLeast(MIN_INTERVAL_MS)
+        val intervalMs = max(targetInterval, durationMs / MAX_FRAMES)
+        val expectedTotal = max(1, min(MAX_FRAMES, (durationMs / intervalMs).toInt()))
 
-            val targetInterval = (1000f / targetFps).toLong().coerceAtLeast(MIN_INTERVAL_MS)
-            val intervalMs = max(targetInterval, durationMs / MAX_FRAMES)
-            val totalExpectedFrames = max(1, min(MAX_FRAMES, (durationMs / intervalMs).toInt()))
+        var timestamp = 0L
+        var delivered = 0
+        var lastTimestamp = 0L
+        var previousHash: Long? = null
 
-            var currentTimestamp = 0L
-            var frameIndex = 0
+        while (timestamp < durationMs && delivered < MAX_FRAMES) {
+            val bitmap = session.decodeAt(timestamp, MAX_FRAME_EDGE, preferSync)
+            if (bitmap != null) {
+                val hash = averageHash(bitmap)
+                val duplicate = previousHash?.let { FrameHash.isDuplicate(it, hash) } == true
 
-            while (currentTimestamp < durationMs && emitted < MAX_FRAMES) {
-                val raw = decodeFrame(retriever, currentTimestamp * 1000L)
-                if (raw != null) {
-                    val bitmap = scaleDownIfLarge(raw, MAX_FRAME_EDGE)
+                if (duplicate) {
+                    bitmap.recycle()
+                } else {
+                    previousHash = hash
+                    lastTimestamp = timestamp
                     try {
-                        onFrame(ExtractedFrame(frameIndex, currentTimestamp, bitmap), totalExpectedFrames)
+                        onFrame(ExtractedFrame(delivered, timestamp, bitmap), expectedTotal)
                     } finally {
                         if (!bitmap.isRecycled) bitmap.recycle()
                     }
-                    emitted++
+                    delivered++
                 }
-                frameIndex++
-                currentTimestamp += intervalMs
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        } finally {
-            try { retriever.release() } catch (e: Exception) { /* ignored */ }
+            timestamp += intervalMs
         }
 
-        emitted
+        return SweepResult(delivered, durationMs, lastTimestamp)
     }
 
-    /**
-     * Decodes a single frame at [timestampMs] at [maxEdge] resolution. Used to re-extract
-     * a chosen representative shot at higher fidelity than the analysis pass.
-     */
-    suspend fun decodeFrameAt(
-        videoUri: Uri,
-        timestampMs: Long,
-        maxEdge: Int
-    ): Bitmap? = withContext(Dispatchers.IO) {
-        val retriever = MediaMetadataRetriever()
-        try {
-            retriever.setDataSource(context, videoUri)
-            decodeFrame(retriever, timestampMs * 1000L)?.let { scaleDownIfLarge(it, maxEdge) }
-        } catch (e: Exception) {
-            null
-        } finally {
-            try { retriever.release() } catch (e: Exception) { /* ignored */ }
+    /** Reduces a frame to an 8x8 luminance grid and hashes it. */
+    private fun averageHash(bitmap: Bitmap): Long {
+        val grid = Bitmap.createScaledBitmap(bitmap, 8, 8, true)
+        val pixels = IntArray(64)
+        grid.getPixels(pixels, 0, 8, 0, 0, 8, 8)
+        if (grid !== bitmap) grid.recycle()
+
+        val luma = FloatArray(64) { i ->
+            val c = pixels[i]
+            0.299f * ((c shr 16) and 0xFF) + 0.587f * ((c shr 8) and 0xFF) + 0.114f * (c and 0xFF)
         }
+        return FrameHash.ofLumaGrid(luma)
     }
+}
 
-    private fun decodeFrame(retriever: MediaMetadataRetriever, timeUs: Long): Bitmap? {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            try {
-                // getScaledFrameAtTime letterboxes into the given box, so pass a square
-                // bound and let scaleDownIfLarge do the final aspect-correct resize.
-                retriever.getScaledFrameAtTime(
-                    timeUs,
-                    MediaMetadataRetriever.OPTION_CLOSEST,
-                    MAX_FRAME_EDGE,
-                    MAX_FRAME_EDGE
-                )?.let { return it }
-            } catch (e: Exception) {
-                // fall through to the unscaled path
-            }
-        }
-        return try {
-            retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
-                ?: retriever.getFrameAtTime(timeUs)
-        } catch (e: Exception) {
-            null
-        }
-    }
+private fun scaleDownIfLarge(bitmap: Bitmap, maxDim: Int): Bitmap {
+    val w = bitmap.width
+    val h = bitmap.height
+    if (max(w, h) <= maxDim) return bitmap
 
-    private fun scaleDownIfLarge(bitmap: Bitmap, maxDim: Int): Bitmap {
-        val w = bitmap.width
-        val h = bitmap.height
-        if (max(w, h) <= maxDim) return bitmap
-
-        val scale = maxDim.toFloat() / max(w, h)
-        val newW = max(1, (w * scale).toInt())
-        val newH = max(1, (h * scale).toInt())
-        val scaled = Bitmap.createScaledBitmap(bitmap, newW, newH, true)
-        if (scaled != bitmap) bitmap.recycle()
-        return scaled
-    }
+    val scale = maxDim.toFloat() / max(w, h)
+    val scaled = Bitmap.createScaledBitmap(
+        bitmap,
+        max(1, (w * scale).toInt()),
+        max(1, (h * scale).toInt()),
+        true
+    )
+    if (scaled !== bitmap) bitmap.recycle()
+    return scaled
 }

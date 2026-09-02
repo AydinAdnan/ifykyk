@@ -18,8 +18,14 @@ import com.iykyk.assignment.domain.model.DetectedFace
  */
 object RepresentativeShotSelector {
 
-    /** Sharpness below this fraction of the person's best is treated as motion blur. */
-    private const val RELATIVE_SHARPNESS_FLOOR = 0.45f
+    /**
+     * Sharpness below this fraction of the person's best is treated as motion blur.
+     *
+     * Raised from 0.45: at that level a clearly softer frame still cleared the gate and
+     * could then win on the scored axes, because repScore mixes sharpness with size, smile
+     * and a solo bonus that together outweigh it.
+     */
+    private const val RELATIVE_SHARPNESS_FLOOR = 0.7f
 
     /** Faces narrower than this fraction of the frame width render poorly as a tile. */
     private const val MIN_RELATIVE_WIDTH = 0.07f
@@ -55,6 +61,33 @@ object RepresentativeShotSelector {
         pool = pool.filter { it.eyesOpen >= EYES_OPEN_FLOOR }.orAll(pool)
 
         return pool.maxByOrNull { it.repScore } ?: pool.first()
+    }
+
+    /**
+     * The same gates and scoring, but returning every candidate in preference order rather
+     * than only the winner.
+     *
+     * Verification against a higher-resolution decode can disprove the top choice - by
+     * revealing a neighbour the sweep was too small to see, or blur it was too small to
+     * measure - and when it does, the caller needs somewhere to go next. Ordering keeps
+     * candidates that passed more gates ahead of those that passed fewer.
+     */
+    fun rank(candidates: List<DetectedFace>): List<DetectedFace> {
+        if (candidates.isEmpty()) return emptyList()
+
+        val bestSharpness = candidates.maxOf { it.sharpnessScore }
+
+        return candidates.sortedWith(
+            compareByDescending<DetectedFace> { it.generousCropBitmap != null }
+                .thenByDescending { it.hasCleanCrop }
+                .thenByDescending { it.isFullyVisible }
+                .thenByDescending {
+                    it.frameWidth > 0 && it.faceWidthPx >= it.frameWidth * MIN_RELATIVE_WIDTH
+                }
+                .thenByDescending { it.sharpnessScore >= bestSharpness * RELATIVE_SHARPNESS_FLOOR }
+                .thenByDescending { it.eyesOpen >= EYES_OPEN_FLOOR }
+                .thenByDescending { it.repScore }
+        )
     }
 
     /** Keeps a filter's result, or falls back to [fallback] when the filter emptied it. */

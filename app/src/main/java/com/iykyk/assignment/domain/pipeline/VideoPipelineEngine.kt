@@ -37,20 +37,17 @@ class VideoPipelineEngine(private val context: Context) {
             )
         )
 
-        val durationMs = frameExtractor.readDurationMs(videoUri) ?: 0L
         val allDetectedFaces = mutableListOf<DetectedFace>()
         var previewBitmap: android.graphics.Bitmap? = null
         var bestSharpness = 0f
         var lastEmittedPct = 10
         var framesSeen = 0
-        var lastTimestampMs = 0L
 
         // Frames are streamed and recycled one at a time rather than collected into a
         // list: at 1080p a full sampling pass would otherwise hold hundreds of megabytes
         // of bitmaps alive at once.
-        frameExtractor.forEachFrame(videoUri, targetFps = 3.0f) { frame, expectedTotal ->
+        val sweep = frameExtractor.forEachFrame(videoUri) { frame, expectedTotal ->
             framesSeen++
-            lastTimestampMs = frame.timestampMs
 
             val faces = faceDetector.detectFacesInFrame(frame.bitmap, frame.index, frame.timestampMs)
             for (face in faces) {
@@ -79,7 +76,7 @@ class VideoPipelineEngine(private val context: Context) {
         completedSteps.add(PipelineStep.EXTRACT_FRAMES)
         completedSteps.add(PipelineStep.DETECT_FACES)
 
-        if (framesSeen == 0) {
+        if (sweep.framesDelivered == 0) {
             send(
                 PipelineProgress(
                     currentStep = PipelineStep.EXTRACT_FRAMES,
@@ -173,7 +170,9 @@ class VideoPipelineEngine(private val context: Context) {
 
         // Only one frame per person is ever shown, so those few frames are worth
         // re-decoding at full resolution for a genuinely sharp tile.
-        val personClusters = cropRefiner.refine(videoUri, draftClusters)
+        val personClusters = cropRefiner.refine(videoUri, draftClusters) { cluster ->
+            RepresentativeShotSelector.rank(cluster.appearances.flatMap { it.detections })
+        }
         completedSteps.add(PipelineStep.COUNT_APPEARANCES)
         completedSteps.add(PipelineStep.SELECT_BEST_SHOTS)
 
@@ -194,7 +193,7 @@ class VideoPipelineEngine(private val context: Context) {
         val totalAppearances = personClusters.sumOf { it.appearanceCount }
         val finalAnalysis = AnalysisResult(
             videoUri = videoUri.toString(),
-            videoDurationMs = if (durationMs > 0L) durationMs else lastTimestampMs,
+            videoDurationMs = if (sweep.durationMs > 0L) sweep.durationMs else sweep.lastTimestampMs,
             totalUniquePeople = personClusters.size,
             totalAppearances = totalAppearances,
             clusters = personClusters,
