@@ -12,7 +12,8 @@ import kotlin.math.sqrt
 class PipelineUnitTests {
 
     private val mockEmbedder = object : FaceEmbedder {
-        override fun getEmbedding(faceBitmap112: android.graphics.Bitmap?): FloatArray = FloatArray(512) { 0.1f }
+        override val inputSize: Int = 160
+        override fun getEmbedding(faceBitmap: android.graphics.Bitmap?): FloatArray = FloatArray(512) { 0.1f }
         override fun cosineSimilarity(u: FloatArray, v: FloatArray): Float {
             var dot = 0f
             val len = minOf(u.size, v.size)

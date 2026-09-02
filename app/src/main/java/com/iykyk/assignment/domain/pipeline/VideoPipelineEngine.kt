@@ -13,8 +13,8 @@ import kotlinx.coroutines.flow.flowOn
 class VideoPipelineEngine(private val context: Context) {
 
     private val frameExtractor = VideoFrameExtractor(context)
-    private val faceDetector = FaceDetectorEngine()
     private val faceEmbedder = TFLiteFaceEmbedder(context)
+    private val faceDetector = FaceDetectorEngine(alignedCropSize = faceEmbedder.inputSize)
     private val clusterer = AgglomerativeClusterer(faceEmbedder, similarityThreshold = 0.46f, centroidMergeThreshold = 0.52f)
     private val segmenter = AppearanceSegmenter(maxGapMs = 1200L, minSegmentDurationMs = 350L)
     private val canvasRenderer = CollageCanvasRenderer(context)
@@ -110,7 +110,7 @@ class VideoPipelineEngine(private val context: Context) {
                 currentStep = PipelineStep.GENERATE_EMBEDDINGS,
                 progressPercent = 50,
                 currentFaceBitmap = previewBitmap,
-                statusMessage = "Extracting 512-d face feature embeddings...",
+                statusMessage = "Extracting face feature embeddings...",
                 completedSteps = completedSteps
             )
         )

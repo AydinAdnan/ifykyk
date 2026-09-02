@@ -10,7 +10,10 @@ import com.iykyk.assignment.domain.model.DetectedFace
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
-class FaceDetectorEngine {
+class FaceDetectorEngine(
+    /** Edge length of the aligned crop, dictated by the recognition model input. */
+    private val alignedCropSize: Int = 160
+) {
 
     private val detector by lazy {
         val options = FaceDetectorOptions.Builder()
@@ -57,11 +60,13 @@ class FaceDetectorEngine {
                     val mouthRight = face.getLandmark(FaceLandmark.MOUTH_RIGHT)?.position
 
                     // Crops
-                    val aligned112 = FaceAlignmentHelper.alignFace112(frameBitmap, box, leftEye, rightEye)
+                    val aligned = FaceAlignmentHelper.alignFace(
+                        frameBitmap, box, leftEye, rightEye, alignedCropSize
+                    )
                     val generousCrop = FaceAlignmentHelper.cropGenerousFace(frameBitmap, box, allBoxesInFrame)
 
                     // Junk gate 3: Laplacian sharpness
-                    val sharpness = FaceAlignmentHelper.computeSharpness(aligned112)
+                    val sharpness = FaceAlignmentHelper.computeSharpness(aligned)
 
                     val detectedFace = DetectedFace(
                         frameIndex = frameIndex,
@@ -69,7 +74,7 @@ class FaceDetectorEngine {
                         boundingBox = box,
                         frameWidth = frameBitmap.width,
                         frameHeight = frameBitmap.height,
-                        alignedCropBitmap = aligned112,
+                        alignedCropBitmap = aligned,
                         generousCropBitmap = generousCrop,
                         trackingId = face.trackingId,
                         isSoloShot = isSolo,

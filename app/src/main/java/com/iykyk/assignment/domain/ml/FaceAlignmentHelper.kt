@@ -9,56 +9,59 @@ import android.graphics.Rect
 import kotlin.math.atan2
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.sqrt
 
 object FaceAlignmentHelper {
 
     /**
-     * Aligns and crops a face to standard 112x112 dimensions using eye coordinates.
+     * Produces the aligned square crop fed to the recognition model.
+     *
+     * FaceNet was trained on MTCNN outputs: a square region around the face box with a
+     * fixed margin, resized to 160x160, with no rotation normalisation. Reproducing that
+     * framing matters as much as the pixel normalisation does - an ArcFace-style tight
+     * eye-distance alignment puts the face at a scale the network never saw.
+     *
+     * Roll is still levelled using the eye landmarks when both are available, since
+     * in-plane rotation is the one nuisance transform that costs accuracy and that we can
+     * remove exactly.
+     *
+     * @param faceRatio fraction of the output edge spanned by the face box (FaceNet's
+     *   32px margin on a 160px crop corresponds to 0.8).
      */
-    fun alignFace112(
+    fun alignFace(
         frame: Bitmap,
         box: Rect,
         leftEye: PointF?,
-        rightEye: PointF?
+        rightEye: PointF?,
+        outputSize: Int,
+        faceRatio: Float = 0.8f
     ): Bitmap {
-        val targetSize = 112
-        val outputBitmap = Bitmap.createBitmap(targetSize, targetSize, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(outputBitmap)
+        val output = Bitmap.createBitmap(outputSize, outputSize, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(output)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
 
-        if (leftEye != null && rightEye != null) {
+        val centerX = box.exactCenterX()
+        val centerY = box.exactCenterY()
+        val faceSpan = max(box.width(), box.height()).toFloat().coerceAtLeast(1f)
+        val scale = (outputSize * faceRatio) / faceSpan
+
+        val rollDegrees = if (leftEye != null && rightEye != null) {
             val dx = rightEye.x - leftEye.x
             val dy = rightEye.y - leftEye.y
-            val angle = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
-            val eyeDist = sqrt((dx * dx + dy * dy).toDouble()).toFloat()
-
-            val eyeCenterX = (leftEye.x + rightEye.x) / 2f
-            val eyeCenterY = (leftEye.y + rightEye.y) / 2f
-
-            // Desired eye distance in 112x112 image is approx 38-42% of width (~44px)
-            val desiredEyeDist = 44f
-            val scale = desiredEyeDist / max(eyeDist, 10f)
-
-            val matrix = Matrix().apply {
-                postTranslate(-eyeCenterX, -eyeCenterY)
-                postRotate(-angle)
-                postScale(scale, scale)
-                postTranslate(targetSize * 0.5f, targetSize * 0.38f)
-            }
-            canvas.drawBitmap(frame, matrix, paint)
+            Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
         } else {
-            // Fallback: direct crop with aspect ratio
-            val srcRect = clampRect(box, frame.width, frame.height)
-            val matrix = Matrix().apply {
-                val scale = targetSize.toFloat() / max(srcRect.width(), srcRect.height()).coerceAtLeast(1)
-                postTranslate(-srcRect.left.toFloat(), -srcRect.top.toFloat())
-                postScale(scale, scale)
-            }
-            canvas.drawBitmap(frame, matrix, paint)
+            0f
         }
 
-        return outputBitmap
+        val matrix = Matrix().apply {
+            postTranslate(-centerX, -centerY)
+            // Only correct plausible head tilt; a wild landmark pair should not spin the crop.
+            if (Math.abs(rollDegrees) <= 35f) postRotate(-rollDegrees)
+            postScale(scale, scale)
+            postTranslate(outputSize * 0.5f, outputSize * 0.5f)
+        }
+        canvas.drawBitmap(frame, matrix, paint)
+
+        return output
     }
 
     /**
@@ -164,14 +167,5 @@ object FaceAlignmentHelper {
         }
 
         return if (count > 0) (sumGrad / count).toFloat() else 0f
-    }
-
-    private fun clampRect(r: Rect, maxW: Int, maxH: Int): Rect {
-        return Rect(
-            max(0, min(r.left, maxW - 1)),
-            max(0, min(r.top, maxH - 1)),
-            max(1, min(r.right, maxW)),
-            max(1, min(r.bottom, maxH))
-        )
     }
 }
