@@ -63,9 +63,6 @@ class FaceDetectorEngine {
                     // Junk gate 3: Laplacian sharpness
                     val sharpness = FaceAlignmentHelper.computeSharpness(aligned112)
 
-                    // Skip extreme motion-blurred frames (junk-gate)
-                    if (sharpness < 65f) continue
-
                     val detectedFace = DetectedFace(
                         frameIndex = frameIndex,
                         timestampMs = timestampMs,

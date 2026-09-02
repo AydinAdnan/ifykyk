@@ -1,4 +1,4 @@
-﻿package com.iykyk.assignment.ui.screens
+package com.iykyk.assignment.ui.screens
 
 import android.graphics.Bitmap
 import androidx.compose.animation.core.*
@@ -116,11 +116,9 @@ fun ProcessingScreen(
 
         Spacer(modifier = Modifier.height(32.dp))
 
-        // 2. Center Face Avatar Card with Floating Physics & Continuous Orbital Ring
+        // 2. Center Face Avatar Card with Continuous Orbital Ring
         Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .offset(y = cardFloatOffset.dp)
+            modifier = Modifier.fillMaxWidth()
         ) {
             BrutalCard(
                 backgroundColor = CardWhite,

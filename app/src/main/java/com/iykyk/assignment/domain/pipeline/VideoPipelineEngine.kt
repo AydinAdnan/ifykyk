@@ -15,7 +15,7 @@ class VideoPipelineEngine(private val context: Context) {
     private val frameExtractor = VideoFrameExtractor(context)
     private val faceDetector = FaceDetectorEngine()
     private val faceEmbedder = TFLiteFaceEmbedder(context)
-    private val clusterer = AgglomerativeClusterer(faceEmbedder, similarityThreshold = 0.52f, centroidMergeThreshold = 0.62f)
+    private val clusterer = AgglomerativeClusterer(faceEmbedder, similarityThreshold = 0.48f, centroidMergeThreshold = 0.54f)
     private val segmenter = AppearanceSegmenter(maxGapMs = 1200L, minSegmentDurationMs = 350L)
     private val canvasRenderer = CollageCanvasRenderer(context)
 
@@ -26,13 +26,13 @@ class VideoPipelineEngine(private val context: Context) {
         emit(
             PipelineProgress(
                 currentStep = PipelineStep.EXTRACT_FRAMES,
-                progressPercent = 5,
+                progressPercent = 10,
                 statusMessage = "Sampling video frames...",
                 completedSteps = completedSteps
             )
         )
 
-        val frames = frameExtractor.extractFrames(videoUri, targetFps = 2.0f) { current, total ->
+        val frames = frameExtractor.extractFrames(videoUri, targetFps = 3.0f) { current, total ->
             // frame extraction progress
         }
         completedSteps.add(PipelineStep.EXTRACT_FRAMES)
