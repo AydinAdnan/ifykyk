@@ -104,10 +104,9 @@ class ProductionVideoPipeline(private val context: Context) {
             benchmark.detectionTimeMs += (System.currentTimeMillis() - tStartDet)
             benchmark.totalFacesDetected += detected.size
 
-            // Evaluate SER-FIQ quality on detected faces
+            // Evaluate fast quality on detected faces & pre-compute appearance embeddings
             val qualityFaces = detected.map { face ->
-                val eval = serFiqQualityEstimator.evaluate(
-                    alignedFace112 = face.alignedCropBitmap,
+                val eval = serFiqQualityEstimator.evaluateFast(
                     sourceFrame = frame.bitmap,
                     box = face.boundingBox ?: android.graphics.Rect(0, 0, 100, 100),
                     landmarks = listOf(face.leftEye, face.rightEye, face.nose, face.mouthLeft, face.mouthRight),
@@ -115,7 +114,13 @@ class ProductionVideoPipeline(private val context: Context) {
                     eulerY = face.headEulerY,
                     eulerZ = face.headEulerZ
                 )
-                face.copy(sharpnessScore = eval.overallQuality * 500f) // Calibrated recognition usefulness
+                val emb = if (face.alignedCropBitmap != null) {
+                    onnxEmbedder.getEmbedding(face.alignedCropBitmap)
+                } else FloatArray(0)
+                face.copy(
+                    sharpnessScore = eval.overallQuality * 500f,
+                    embedding = emb
+                )
             }
 
             // DeepSORT-Lite frame association
@@ -132,14 +137,15 @@ class ProductionVideoPipeline(private val context: Context) {
             }
 
             val pct = 10 + (framesProcessed * 35 / max(1, expectedTotal)).coerceAtMost(35)
-            if (pct >= lastEmittedPct + 3) {
+            if (pct > lastEmittedPct || framesProcessed % 2 == 0) {
                 lastEmittedPct = pct
+                android.util.Log.i("ProductionPipeline", "Frame $framesProcessed / $expectedTotal ($pct%) - ${qualityFaces.size} faces")
                 send(
                     PipelineProgress(
                         currentStep = PipelineStep.DETECT_FACES,
                         progressPercent = pct,
                         currentFaceBitmap = previewBitmap,
-                        statusMessage = "Detecting faces & scenes ($framesProcessed frames)...",
+                        statusMessage = "Analyzing frame $framesProcessed of $expectedTotal (${allObservedFaces.size} faces)...",
                         completedSteps = completedSteps
                     )
                 )
@@ -191,7 +197,7 @@ class ProductionVideoPipeline(private val context: Context) {
             val weights = mutableListOf<Float>()
 
             for (f in candidateFaces) {
-                val vec = onnxEmbedder.getEmbedding(f.alignedCropBitmap)
+                val vec = if (f.embedding.isNotEmpty()) f.embedding else onnxEmbedder.getEmbedding(f.alignedCropBitmap)
                 if (vec.isNotEmpty()) {
                     vectors.add(vec)
                     weights.add(max(0.1f, f.recognitionQuality))

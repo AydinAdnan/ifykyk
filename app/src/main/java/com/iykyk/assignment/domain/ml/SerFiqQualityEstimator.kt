@@ -35,6 +35,58 @@ class SerFiqQualityEstimator(private val embedder: FaceEmbedder) {
         val boundaryClearance: Float
     )
 
+    fun evaluateFast(
+        sourceFrame: Bitmap,
+        box: Rect,
+        landmarks: List<PointF?>,
+        eulerX: Float,
+        eulerY: Float,
+        eulerZ: Float
+    ): QualityEvaluation {
+        if (box.width() <= 0 || box.height() <= 0) {
+            return QualityEvaluation(0f, 0f, 0f, 0f, 0f, 0f)
+        }
+
+        // 1. Sharpness Quality
+        val rawSharpness = FaceAlignmentHelper.computeSharpness(sourceFrame, box)
+        val sharpnessQuality = (rawSharpness / (rawSharpness + 150f)).coerceIn(0f, 1f)
+
+        // 2. Head Pose Frontality
+        val yawPenalty = abs(eulerY) / 45f
+        val pitchPenalty = abs(eulerX) / 35f
+        val rollPenalty = abs(eulerZ) / 30f
+        val frontality = (1f - (0.50f * yawPenalty + 0.30f * pitchPenalty + 0.20f * rollPenalty)).coerceIn(0f, 1f)
+
+        // 3. Resolution Sufficiency
+        val minTargetEdge = 112f
+        val resolutionSufficiency = (min(box.width(), box.height()) / minTargetEdge).coerceIn(0f, 1f)
+
+        // 4. Boundary Clearance & Occlusion
+        val insetX = sourceFrame.width * 0.015f
+        val insetY = sourceFrame.height * 0.015f
+        val unclipped = box.left >= insetX && box.top >= insetY &&
+            box.right <= sourceFrame.width - insetX && box.bottom <= sourceFrame.height - insetY
+        val landmarkCount = landmarks.count { it != null }
+        val landmarkRatio = (landmarkCount / max(1f, landmarks.size.toFloat())).coerceIn(0f, 1f)
+        val boundaryClearance = (if (unclipped) 0.6f else 0.1f) + 0.4f * landmarkRatio
+
+        val overall = (
+            0.35f * sharpnessQuality +
+            0.30f * frontality +
+            0.20f * resolutionSufficiency +
+            0.15f * boundaryClearance
+        ).coerceIn(0f, 1f)
+
+        return QualityEvaluation(
+            overallQuality = overall,
+            embeddingStability = 1f,
+            sharpnessQuality = sharpnessQuality,
+            frontality = frontality,
+            resolutionSufficiency = resolutionSufficiency,
+            boundaryClearance = boundaryClearance
+        )
+    }
+
     fun evaluate(
         alignedFace112: Bitmap?,
         sourceFrame: Bitmap,

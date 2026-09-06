@@ -37,33 +37,38 @@ class VideoFrameExtractor(private val context: Context) {
          * Tile sharpness is not tied to this number: RepresentativeCropRefiner re-decodes
          * the handful of chosen frames at higher resolution.
          */
-        const val MAX_FRAME_EDGE = 720
+        const val MAX_FRAME_EDGE = 640
 
         /** Upper bound on frames handed to detection, to keep latency bounded. */
-        const val MAX_FRAMES = 72
+        const val MAX_FRAMES = 45
 
         /** Lower bound, so very short clips still get dense sampling. */
-        const val MIN_INTERVAL_MS = 300L
+        const val MIN_INTERVAL_MS = 350L
     }
 
     /**
      * An open handle on one video.
-     *
-     * MediaMetadataRetriever.setDataSource parses the container and is far from free, and
-     * the pipeline used to pay for it repeatedly: once to read the duration, once for the
-     * sweep, and once more per person during representative refinement. A session pays it
-     * once and hands out as many decodes as the caller needs.
      */
     class Session internal constructor(
         private val retriever: MediaMetadataRetriever,
         val durationMs: Long
     ) {
-        /**
-         * @param preferSync seek to the nearest keyframe rather than decoding forward to
-         *   the exact timestamp. Keyframe seeks are dramatically cheaper - an exact seek
-         *   must decode every frame from the preceding keyframe to the target, so a sweep
-         *   of N samples can decode far more frames than the video even contains.
-         */
+        val videoWidth: Int
+        val videoHeight: Int
+
+        init {
+            val rawW = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 1080
+            val rawH = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 1920
+            val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+            if (rotation == 90 || rotation == 270) {
+                videoWidth = rawH
+                videoHeight = rawW
+            } else {
+                videoWidth = rawW
+                videoHeight = rawH
+            }
+        }
+
         fun decodeAt(timestampMs: Long, maxEdge: Int, preferSync: Boolean): Bitmap? {
             val timeUs = timestampMs * 1000L
             val option = if (preferSync) {
@@ -72,17 +77,22 @@ class VideoFrameExtractor(private val context: Context) {
                 MediaMetadataRetriever.OPTION_CLOSEST
             }
 
-            val raw = decodeScaled(timeUs, option, maxEdge)
-                ?: decodeScaled(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, maxEdge)
+            val maxDim = max(videoWidth, videoHeight).coerceAtLeast(1)
+            val scale = maxEdge.toFloat() / maxDim
+            val targetW = (((videoWidth * scale).toInt() / 2) * 2).coerceAtLeast(16)
+            val targetH = (((videoHeight * scale).toInt() / 2) * 2).coerceAtLeast(16)
+
+            val raw = decodeScaled(timeUs, option, targetW, targetH)
+                ?: decodeScaled(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, targetW, targetH)
                 ?: return null
 
             return scaleDownIfLarge(raw, maxEdge)
         }
 
-        private fun decodeScaled(timeUs: Long, option: Int, maxEdge: Int): Bitmap? {
+        private fun decodeScaled(timeUs: Long, option: Int, dstWidth: Int, dstHeight: Int): Bitmap? {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
                 try {
-                    retriever.getScaledFrameAtTime(timeUs, option, maxEdge, maxEdge)
+                    retriever.getScaledFrameAtTime(timeUs, option, dstWidth, dstHeight)
                         ?.let { return it }
                 } catch (e: Exception) {
                     // fall through to the unscaled path
