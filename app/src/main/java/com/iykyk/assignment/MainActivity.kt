@@ -1,5 +1,6 @@
 package com.iykyk.assignment
 
+import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -11,6 +12,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -21,13 +23,22 @@ import com.iykyk.assignment.ui.viewmodel.CollageViewModel
 import com.iykyk.assignment.ui.viewmodel.ScreenState
 
 class MainActivity : ComponentActivity() {
+    private var collageViewModel: CollageViewModel? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
             MyApplicationTheme {
                 val viewModel: CollageViewModel = viewModel()
+                collageViewModel = viewModel
                 val screenState by viewModel.screenState.collectAsState()
+
+                LaunchedEffect(intent?.data) {
+                    intent?.data?.let { uri ->
+                        viewModel.onVideoSelected(uri)
+                    }
+                }
 
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     AnimatedContent(
@@ -137,6 +148,14 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.data?.let { uri ->
+            collageViewModel?.onVideoSelected(uri)
         }
     }
 

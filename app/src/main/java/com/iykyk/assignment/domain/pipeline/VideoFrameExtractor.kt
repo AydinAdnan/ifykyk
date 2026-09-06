@@ -5,8 +5,10 @@ import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
 import kotlin.math.max
 import kotlin.math.min
 
@@ -110,8 +112,40 @@ class VideoFrameExtractor(private val context: Context) {
     suspend fun <T> withSession(videoUri: Uri, block: suspend (Session) -> T): T? =
         withContext(Dispatchers.IO) {
             val retriever = MediaMetadataRetriever()
+            var pfd: ParcelFileDescriptor? = null
+            var tempFile: File? = null
             try {
-                retriever.setDataSource(context, videoUri)
+                var dataSourceSet = false
+                try {
+                    pfd = context.contentResolver.openFileDescriptor(videoUri, "r")
+                    if (pfd != null) {
+                        retriever.setDataSource(pfd.fileDescriptor)
+                        dataSourceSet = true
+                    }
+                } catch (e: Exception) {
+                    // Fall back to context URI or cached file
+                }
+
+                if (!dataSourceSet) {
+                    try {
+                        retriever.setDataSource(context, videoUri)
+                        dataSourceSet = true
+                    } catch (e: Exception) {
+                        // Fall back to copying to cache
+                    }
+                }
+
+                if (!dataSourceSet) {
+                    val cached = File(context.cacheDir, "temp_video_${System.currentTimeMillis()}.mp4")
+                    context.contentResolver.openInputStream(videoUri)?.use { input ->
+                        cached.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    tempFile = cached
+                    retriever.setDataSource(cached.absolutePath)
+                }
+
                 val durationMs = retriever
                     .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
                     ?.toLongOrNull() ?: 10_000L
@@ -121,6 +155,8 @@ class VideoFrameExtractor(private val context: Context) {
                 null
             } finally {
                 try { retriever.release() } catch (e: Exception) { /* ignored */ }
+                try { pfd?.close() } catch (e: Exception) { /* ignored */ }
+                try { tempFile?.delete() } catch (e: Exception) { /* ignored */ }
             }
         }
 
