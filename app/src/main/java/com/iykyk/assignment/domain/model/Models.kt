@@ -168,5 +168,91 @@ data class AnalysisResult(
     val totalUniquePeople: Int,
     val totalAppearances: Int,
     val clusters: List<PersonCluster>,
-    val collageBitmap: Bitmap? = null
+    val collageBitmap: Bitmap? = null,
+    val targetOutput: TargetOutput? = null
 )
+
+/**
+ * Raw observation extracted from ML Kit face detector before tracking and embedding.
+ */
+data class FaceObservation(
+    val frameIndex: Int,
+    val timestampMs: Long,
+    val bbox: Rect,
+    val landmarks: List<PointF> = emptyList(),
+    val leftEye: PointF? = null,
+    val rightEye: PointF? = null,
+    val nose: PointF? = null,
+    val mouthLeft: PointF? = null,
+    val mouthRight: PointF? = null,
+    val eulerX: Float = 0f, // Pitch
+    val eulerY: Float = 0f, // Yaw
+    val eulerZ: Float = 0f, // Roll
+    val eyesOpen: Float = 0f,
+    val smileProbability: Float = 0f,
+    val trackingId: Int? = null,
+    val sourceBitmap: Bitmap? = null
+)
+
+/**
+ * Multi-vector identity representation for a confirmed person.
+ * Avoids single averaged embedding collapse by preserving quality-weighted fusion,
+ * variance, and best-take reference vectors.
+ */
+data class PersonEmbeddingProfile(
+    val personId: Int,
+    val bestEmbedding: FloatArray,
+    val averageEmbedding: FloatArray,
+    val qualityWeightedEmbedding: FloatArray,
+    val embeddingVariance: FloatArray,
+    val memberCount: Int = 1,
+    val meanQuality: Float = 1.0f
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is PersonEmbeddingProfile) return false
+        return personId == other.personId
+    }
+
+    override fun hashCode(): Int = personId
+}
+
+/**
+ * Detected scene segment bounded by hard cuts, cross dissolves, fades, or camera zoom transitions.
+ */
+data class Scene(
+    val id: Int,
+    val startTimestamp: Long,
+    val endTimestamp: Long,
+    val confidence: Float,
+    val transitionType: SceneTransitionType = SceneTransitionType.HARD_CUT
+) {
+    val durationMs: Long get() = (endTimestamp - startTimestamp).coerceAtLeast(0L)
+}
+
+enum class SceneTransitionType {
+    HARD_CUT,
+    CROSS_DISSOLVE,
+    FADE_IN,
+    FADE_OUT,
+    MOTION_BLUR_TRANSITION,
+    ZOOM_TRANSITION
+}
+
+/**
+ * Detected frame-level video transition or transient disturbance.
+ */
+data class Transition(
+    val timestampMs: Long,
+    val frameIndex: Int,
+    val type: TransitionKind,
+    val severity: Float
+)
+
+enum class TransitionKind {
+    GAUSSIAN_BLUR,
+    MOTION_BLUR,
+    WHIP_PAN,
+    DISSOLVE
+}
+

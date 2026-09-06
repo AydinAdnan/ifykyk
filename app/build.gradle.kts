@@ -80,6 +80,9 @@ dependencies {
     // TensorFlow Lite for face embeddings
     implementation(libs.tensorflow.lite)
 
+    // ONNX Runtime Mobile with XNNPACK support
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.18.0")
+
     // Testing
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
