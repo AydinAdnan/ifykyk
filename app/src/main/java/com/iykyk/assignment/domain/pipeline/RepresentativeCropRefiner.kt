@@ -51,10 +51,9 @@ class RepresentativeCropRefiner(
 
         /**
          * Laplacian variance below which a face is rejected as blurred, measured on the
-         * verification decode. Absolute rather than relative: at this point the question
-         * is whether the tile will look sharp, not whether it is the best of a bad set.
+         * verification decode. Set to 45f to ensure clear solo portraits are kept over noisy fallbacks.
          */
-        private const val MIN_SHARPNESS = 90f
+        private const val MIN_SHARPNESS = 45f
     }
 
     /** A verified candidate and the crop that verification produced. */
@@ -65,7 +64,7 @@ class RepresentativeCropRefiner(
         val isSolo: Boolean,
         val sharpness: Float
     ) {
-        val isAcceptable: Boolean get() = isClean && (!shot.isSoloShot || isSolo) && sharpness >= MIN_SHARPNESS
+        val isAcceptable: Boolean get() = isClean && isSolo && sharpness >= MIN_SHARPNESS
     }
 
     suspend fun refine(
@@ -90,17 +89,18 @@ class RepresentativeCropRefiner(
         for (candidate in candidates.take(MAX_CANDIDATES)) {
             val verified = verify(session, candidate) ?: continue
 
+            android.util.Log.i(
+                "CropRefiner",
+                "Person ${cluster.id} cand @ ${candidate.timestampMs}ms: solo=${verified.isSolo}, clean=${verified.isClean}, sharp=${verified.sharpness}, acceptable=${verified.isAcceptable}"
+            )
+
             if (verified.isAcceptable) {
-                fallback?.crop?.recycle()
                 return cluster.withShot(verified)
             }
 
             // Keep the least-bad attempt in case nothing verifies cleanly.
             if (fallback == null || verified.score > fallback.score) {
-                fallback?.crop?.recycle()
                 fallback = verified
-            } else {
-                verified.crop.recycle()
             }
         }
 
@@ -144,7 +144,10 @@ class RepresentativeCropRefiner(
                 ?.takeIf { iou(it, scaledBox) >= MIN_MATCH_IOU }
             val targetBox = matched ?: scaledBox
 
-            val neighbours = allBoxes.ifEmpty {
+            val otherDetectedBoxes = allBoxes.filter { it != targetBox }
+            val neighbours = if (otherDetectedBoxes.isNotEmpty()) {
+                otherDetectedBoxes
+            } else {
                 shot.otherFaceBoxesInFrame.map { it.scaled(scale, frame.width, frame.height) }
             }
 
@@ -155,11 +158,27 @@ class RepresentativeCropRefiner(
                 maxEdge = CROP_MAX_EDGE
             )
 
+            val isTargetCentered = run {
+                val cx = (targetBox.left + targetBox.right) / 2f
+                val w = frame.width.toFloat()
+                val h = frame.height.toFloat()
+                if (h > w) {
+                    val isCentered = cx >= w * 0.36f && cx <= w * 0.64f
+                    val straddlesCenterline = targetBox.left < w * 0.49f && targetBox.right > w * 0.51f
+                    isCentered && straddlesCenterline
+                } else {
+                    cx >= w * 0.25f && cx <= w * 0.75f
+                }
+            }
+            val isSoloCandidate = RepresentativeShotSelector.isSoloPortrait(shot) &&
+                isTargetCentered &&
+                otherDetectedBoxes.isEmpty() &&
+                detected.size <= 1
             Verified(
                 shot = shot,
                 crop = crop,
                 isClean = plan.isClean,
-                isSolo = detected.size <= 1,
+                isSolo = isSoloCandidate,
                 sharpness = FaceAlignmentHelper.computeSharpness(frame, targetBox)
             )
         } catch (e: Exception) {

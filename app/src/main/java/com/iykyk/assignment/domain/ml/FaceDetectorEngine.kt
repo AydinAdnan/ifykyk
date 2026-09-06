@@ -48,6 +48,9 @@ class FaceDetectorEngine(
          * (so crops can avoid them) but are too small to identify or to present.
          */
         const val MIN_USABLE_RELATIVE_WIDTH = 0.045f
+
+        /** Minimum Laplacian sharpness score required to reject motion blur & artifacts */
+        const val MIN_DETECTION_SHARPNESS = 25f
     }
 
     /**
@@ -82,6 +85,15 @@ class FaceDetectorEngine(
 
                 for (face in identifiableFaces) {
                     val box = face.boundingBox
+                    val otherBoxes = allBoxesInFrame.filter { it != box }
+
+                    // Measured on the native frame pixels, not on the aligned crop: the
+                    // aligned crop is resampled to the model input size, so a small face
+                    // would be scored on interpolated detail it does not actually have.
+                    val sharpness = FaceAlignmentHelper.computeSharpness(frameBitmap, box)
+                    if (sharpness < MIN_DETECTION_SHARPNESS) {
+                        continue // Reject motion blur and noise
+                    }
 
                     // Extract landmarks
                     val leftEye = face.getLandmark(FaceLandmark.LEFT_EYE)?.position
@@ -96,13 +108,8 @@ class FaceDetectorEngine(
                     )
                     val (portraitCrop, cropPlan) =
                         FaceAlignmentHelper.cropPortrait(
-                            frameBitmap, box, allBoxesInFrame, portraitCropMaxEdge
+                            frameBitmap, box, otherBoxes, portraitCropMaxEdge
                         )
-
-                    // Measured on the native frame pixels, not on the aligned crop: the
-                    // aligned crop is resampled to the model input size, so a small face
-                    // would be scored on interpolated detail it does not actually have.
-                    val sharpness = FaceAlignmentHelper.computeSharpness(frameBitmap, box)
 
                     val detectedFace = DetectedFace(
                         frameIndex = frameIndex,
@@ -114,8 +121,8 @@ class FaceDetectorEngine(
                         generousCropBitmap = portraitCrop,
                         hasCleanCrop = cropPlan.isClean,
                         trackingId = face.trackingId,
-                        isSoloShot = isSolo,
-                        otherFaceBoxesInFrame = allBoxesInFrame,
+                        isSoloShot = isSolo && otherBoxes.isEmpty(),
+                        otherFaceBoxesInFrame = otherBoxes,
                         leftEye = leftEye,
                         rightEye = rightEye,
                         nose = nose,

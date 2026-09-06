@@ -35,54 +35,52 @@ object RepresentativeShotSelector {
 
     fun select(candidates: List<DetectedFace>): DetectedFace {
         require(candidates.isNotEmpty()) { "Cannot select a representative from no candidates" }
+        return rank(candidates).first()
+    }
 
-        val withCrop = candidates.filter { it.generousCropBitmap != null }.orAll(candidates)
+    fun isSoloPortrait(f: DetectedFace): Boolean {
+        if (!f.isSoloShot || f.otherFaceBoxesInFrame.isNotEmpty()) return false
+        val box = f.boundingBox ?: return true
+        if (f.frameWidth <= 0 || f.frameHeight <= 0) return true
+        val w = f.frameWidth.toFloat()
+        val h = f.frameHeight.toFloat()
+        val cx = (box.left + box.right) / 2f
 
-        // 1. Rejection filters: drop heavily blurred, profile, crowded, and edge-clipped faces
-        val unclipped = withCrop.filter { it.isFullyVisible }.orAll(withCrop)
-        val nonCrowded = unclipped.filter { it.hasCleanCrop }.orAll(unclipped)
-        val nonProfile = nonCrowded.filter { kotlin.math.abs(it.headEulerY) <= 35f && kotlin.math.abs(it.headEulerZ) <= 30f }.orAll(nonCrowded)
-
-        // 2. Strict Priority 1: Solo Shot Gate (Only solo portraits feature in final collage)
-        var pool = nonProfile.filter { it.isSoloShot && it.otherFaceBoxesInFrame.isEmpty() }.orAll(nonProfile)
-
-        // 3. Priority 2: Quality floor
-        val bestQuality = pool.maxOfOrNull { it.recognitionQuality } ?: 1.0f
-        pool = pool.filter { it.recognitionQuality >= bestQuality * 0.60f }.orAll(pool)
-
-        // 4. Priority 4: Sharpness Floor (Reject motion blurred frames)
-        val bestSharpness = pool.maxOfOrNull { it.sharpnessScore } ?: 0f
-        pool = pool.filter { it.sharpnessScore >= bestSharpness * RELATIVE_SHARPNESS_FLOOR }.orAll(pool)
-
-        // 5. Open eyes
-        pool = pool.filter { it.eyesOpen >= EYES_OPEN_FLOOR }.orAll(pool)
-
-        // Final Selection: Multi-priority ranking (SER-FIQ Quality -> Frontality -> Sharpness -> Face Size)
-        return pool.maxWithOrNull(
-            compareBy<DetectedFace> { it.isSoloShot && it.otherFaceBoxesInFrame.isEmpty() }
-                .thenBy { it.recognitionQuality }
-                .thenBy { it.frontality }
-                .thenBy { it.sharpnessScore }
-                .thenBy { it.faceWidthPx }
-        ) ?: pool.first()
+        // In vertical mobile video (h > w), split-screen / duet / two-shot frames place subjects
+        // in the left half (cx < 0.36w, right <= 0.50w) or right half (cx > 0.64w, left >= 0.50w).
+        // A genuine solo portrait is centered in the frame and straddles the vertical centerline.
+        return if (h > w) {
+            val isCentered = cx >= w * 0.36f && cx <= w * 0.64f
+            val straddlesCenterline = box.left < w * 0.49f && box.right > w * 0.51f
+            isCentered && straddlesCenterline
+        } else {
+            cx >= w * 0.25f && cx <= w * 0.75f
+        }
     }
 
     /**
-     * Ranks all candidates according to the strict 5-tier priority hierarchy:
-     * Priority 1: Solo shot
-     * Priority 2: Highest SER-FIQ quality
-     * Priority 3: Frontal pose
-     * Priority 4: Sharpness
-     * Priority 5: Largest face crop
+     * Ranks all candidates according to the strict priority hierarchy:
+     * Priority 1: Centered solo portraits only (multi-person group scenes & split-screens are filtered out)
+     * Priority 2: Clean crop (no overlapping neighbours)
+     * Priority 3: Fully visible / unclipped
+     * Priority 4: Highest SER-FIQ quality
+     * Priority 5: Frontal pose & high sharpness
+     * Priority 6: Largest face crop
      */
     fun rank(candidates: List<DetectedFace>): List<DetectedFace> {
         if (candidates.isEmpty()) return emptyList()
 
-        return candidates.sortedWith(
-            compareByDescending<DetectedFace> { it.generousCropBitmap != null }
-                .thenByDescending { it.isSoloShot && it.otherFaceBoxesInFrame.isEmpty() }
+        val withCrop = candidates.filter { it.generousCropBitmap != null }.ifEmpty { candidates }
+
+        // Strict priority 1: Solitary centered portrait shots (zero other people, no split screens)
+        val soloShots = withCrop.filter { isSoloPortrait(it) }
+        val pool = if (soloShots.isNotEmpty()) soloShots else withCrop
+
+        return pool.sortedWith(
+            compareByDescending<DetectedFace> { isSoloPortrait(it) }
                 .thenByDescending { it.hasCleanCrop }
                 .thenByDescending { it.isFullyVisible }
+                .thenByDescending { it.sharpnessScore >= 40f }
                 .thenByDescending { it.recognitionQuality }
                 .thenByDescending { it.frontality }
                 .thenByDescending { it.sharpnessScore }

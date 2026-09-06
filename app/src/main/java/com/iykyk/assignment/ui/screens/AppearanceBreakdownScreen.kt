@@ -1,5 +1,6 @@
-﻿package com.iykyk.assignment.ui.screens
+package com.iykyk.assignment.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -13,6 +14,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iykyk.assignment.domain.model.AnalysisResult
@@ -86,56 +89,90 @@ fun AppearanceBreakdownScreen(
                 rotation = 0.5f,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                     result.clusters.forEachIndexed { idx, cluster ->
-                        val dotColor = dotColors[idx % dotColors.size]
+                        val themeColor = dotColors[idx % dotColors.size]
+                        val repBmp = cluster.representativeShot.generousCropBitmap ?: cluster.representativeShot.alignedCropBitmap
 
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 8.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(CardWhite)
+                                .border(1.5.dp, BrutalBorder, RoundedCornerShape(10.dp))
+                                .padding(horizontal = 12.dp, vertical = 10.dp)
                         ) {
-                            // Colored bullet dot
+                            // 1. Person Photo Avatar Stamp
                             Box(
                                 modifier = Modifier
-                                    .size(14.dp)
-                                    .clip(CircleShape)
-                                    .background(dotColor)
-                                    .border(1.5.dp, BrutalBorder, CircleShape)
-                            )
+                                    .size(56.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(themeColor.copy(alpha = 0.25f))
+                                    .border(2.dp, BrutalBorder, RoundedCornerShape(8.dp)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (repBmp != null) {
+                                    Image(
+                                        bitmap = repBmp.asImageBitmap(),
+                                        contentDescription = "Person photo",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else {
+                                    Text(
+                                        text = "${idx + 1}",
+                                        fontFamily = CherryBombOneFamily,
+                                        fontSize = 18.sp,
+                                        color = TextPrimary
+                                    )
+                                }
+                            }
 
-                            Spacer(modifier = Modifier.width(12.dp))
+                            Spacer(modifier = Modifier.width(16.dp))
 
-                            // Person name
+                            // 2. Dash separator
                             Text(
-                                text = cluster.personLabel,
-                                fontSize = 15.sp,
-                                fontFamily = GoogleSansFamily,
-                                color = TextPrimary
-                            )
-
-                            Spacer(modifier = Modifier.width(8.dp))
-
-                            // Dotted leader line
-                            Text(
-                                text = ". . . . . . . . . . . . . . . .",
-                                fontSize = 14.sp,
-                                color = TextMuted,
-                                maxLines = 1,
-                                modifier = Modifier.weight(1f)
-                            )
-
-                            Spacer(modifier = Modifier.width(8.dp))
-
-                            // Appearance count chip
-                            val countStr = String.format("%02d", cluster.appearanceCount)
-                            Text(
-                                text = countStr,
-                                fontSize = 18.sp,
+                                text = "—",
+                                fontSize = 22.sp,
                                 fontFamily = CherryBombOneFamily,
                                 color = TextPrimary
                             )
+
+                            Spacer(modifier = Modifier.width(16.dp))
+
+                            // 3. Count label
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = if (cluster.appearanceCount == 1) "1 appearance" else "${cluster.appearanceCount} appearances",
+                                    fontSize = 16.sp,
+                                    fontFamily = GoogleSansFamily,
+                                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                                    color = TextPrimary
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            // 4. Bold Count Badge
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(themeColor)
+                                    .border(1.5.dp, BrutalBorder, RoundedCornerShape(6.dp))
+                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                val countStr = String.format("%02d", cluster.appearanceCount)
+                                Text(
+                                    text = countStr,
+                                    fontSize = 18.sp,
+                                    fontFamily = CherryBombOneFamily,
+                                    color = TextPrimary
+                                )
+                            }
                         }
                     }
                 }

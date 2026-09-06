@@ -1,4 +1,4 @@
-﻿package com.iykyk.assignment.domain.pipeline
+package com.iykyk.assignment.domain.pipeline
 
 import android.content.ClipData
 import android.content.ContentValues
@@ -524,7 +524,7 @@ class CollageCanvasRenderer(private val context: Context) {
             put(MediaStore.Images.Media.DISPLAY_NAME, filename)
             put(MediaStore.Images.Media.MIME_TYPE, "image/png")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/UniqueCollages")
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/IFYKYK")
                 put(MediaStore.Images.Media.IS_PENDING, 1)
             }
         }

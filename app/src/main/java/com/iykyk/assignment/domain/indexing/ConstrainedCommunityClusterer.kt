@@ -13,7 +13,7 @@ import kotlin.math.min
  */
 class ConstrainedCommunityClusterer(
     private val embedder: FaceEmbedder,
-    private val similarityThreshold: Float = 0.46f
+    private val similarityThreshold: Float = 0.65f
 ) {
 
     data class Edge(
@@ -53,6 +53,7 @@ class ConstrainedCommunityClusterer(
                     // Check cannot-link constraint
                     if (!haveCoOccurrenceConflict(t, nbrTracklet)) {
                         graph[t.id]?.add(Edge(nbrId, sim))
+                        android.util.Log.i("CommunityClusterer", "Edge: track ${t.id} (${t.startMs}ms) <-> track $nbrId (${nbrTracklet.startMs}ms): sim=$sim")
                     }
                 }
             }
@@ -114,9 +115,13 @@ class ConstrainedCommunityClusterer(
                     .thenBy { group -> group.minOf { it.startMs } }
             )
 
-        return sortedClusters.mapIndexed { index, group ->
-            (index + 1) to group.sortedBy { it.startMs }
+        val resultMap = sortedClusters.mapIndexed { index, group ->
+            val clusterId = index + 1
+            android.util.Log.i("CommunityClusterer", "Cluster $clusterId has ${group.size} tracks: ${group.map { "t${it.id}(${it.startMs}ms)" }}")
+            clusterId to group.sortedBy { it.startMs }
         }.toMap()
+
+        return resultMap
     }
 
     private fun buildCannotLinkMap(tracklets: List<Tracklet>): Map<Int, Set<Int>> {

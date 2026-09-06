@@ -88,26 +88,56 @@ object PortraitCropPlanner {
 
         var crop = initialCrop(face, frame)
 
-        val neighbours = others.filter { it != face && it.intersects(protected).not() && it.width > 0 }
+        val neighbours = others.filter { it != face && it.width > 0 }
         for (neighbour in neighbours.sortedByDescending { it.area }) {
             if (!crop.intersects(neighbour)) continue
             crop = excludeNeighbour(crop, neighbour, protected) ?: crop
         }
 
-        val stillOverlapping = others.any { it != face && it.intersects(crop) }
-        val tooTight = crop.width < face.width * MIN_WIDTH_FACE_MULTIPLE
-
-        val finalCrop = if (tooTight) {
-            // Better a slightly tight portrait than one sliced to a sliver.
-            clampToFrame(expandToAspect(protected, frame), frame)
-        } else {
-            clampToFrame(crop, frame)
+        // Hard trim: Ensure crop strictly excludes all neighbours without cutting into protected face
+        for (neighbour in neighbours) {
+            if (crop.intersects(neighbour)) {
+                if (neighbour.centerX < face.centerX) {
+                    val boundary = max(crop.left, neighbour.right)
+                    if (boundary <= protected.left) {
+                        crop = crop.copy(left = boundary)
+                    }
+                } else {
+                    val boundary = min(crop.right, neighbour.left)
+                    if (boundary >= protected.right) {
+                        crop = crop.copy(right = boundary)
+                    }
+                }
+            }
         }
+
+        var finalCrop = clampToFrame(crop, frame)
+
+        // Split-screen column boundary enforcement:
+        // In vertical split-screen mobile layouts, two video feeds meet at the frame centerline (midX = frameWidth / 2).
+        // If a face's center is situated in the left feed (face.centerX < midX) and does not span full-screen,
+        // its crop must NEVER cross midX into the right feed.
+        // Similarly, if a face's center is situated in the right feed (face.centerX > midX),
+        // its crop must NEVER cross midX into the left feed.
+        val midX = frameWidth / 2
+        if (face.centerX < midX && (face.right <= midX || face.centerX < midX * 0.85f)) {
+            val clampedRight = min(finalCrop.right, midX)
+            if (clampedRight > face.left) {
+                finalCrop = finalCrop.copy(right = clampedRight)
+            }
+        } else if (face.centerX > midX && (face.left >= midX || face.centerX > midX * 1.15f)) {
+            val clampedLeft = max(finalCrop.left, midX)
+            if (clampedLeft < face.right) {
+                finalCrop = finalCrop.copy(left = clampedLeft)
+            }
+        }
+
+        val overlappingAfter = others.any { it != face && it.intersects(finalCrop) }
 
         val coverage = if (finalCrop.height > 0) face.height.toFloat() / finalCrop.height else 1f
         return CropPlan(
             box = finalCrop,
-            isClean = !stillOverlapping && !tooTight,
+            isClean = !overlappingAfter,
             faceCoverage = coverage
         )
     }

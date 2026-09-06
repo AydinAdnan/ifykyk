@@ -51,7 +51,7 @@ class AppearanceSegmenter(
             .filter { it.durationMs >= minSegmentDurationMs }
             .ifEmpty { listOf(allSegments.maxByOrNull { it.durationMs } ?: allSegments.first()) }
 
-        val candidates = segments.flatMap { it.detections }
+        val candidates = tracklets.flatMap { it.detections }
         return PersonCluster(
             id = personId,
             personLabel = "Person $personId",

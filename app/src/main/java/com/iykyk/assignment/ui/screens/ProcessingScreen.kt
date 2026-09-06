@@ -166,7 +166,7 @@ fun ProcessingScreen(
                                 animationSpec = tween(300),
                                 label = "avatarCrossfade"
                             ) { faceBmp ->
-                                if (faceBmp != null) {
+                                if (faceBmp != null && !faceBmp.isRecycled) {
                                     Image(
                                         bitmap = faceBmp.asImageBitmap(),
                                         contentDescription = "Active Face",

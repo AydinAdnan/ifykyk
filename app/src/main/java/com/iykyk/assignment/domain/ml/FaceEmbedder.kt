@@ -92,11 +92,10 @@ class TFLiteFaceEmbedder(private val context: Context? = null) : FaceEmbedder {
             // silently halve throughput.
             val options = Interpreter.Options().apply {
                 setNumThreads(Runtime.getRuntime().availableProcessors().coerceIn(2, 4))
-                try {
-                    setUseXNNPACK(true)
-                } catch (e: Throwable) {
-                    android.util.Log.w(TAG, "XNNPACK unavailable; running the default CPU kernels")
-                }
+                // Disable XNNPACK explicitly: on certain models (like this 181-node FaceNet)
+                // and emulator/device architectures, XNNPACK partitions the graph into 90+ slices
+                // and fails at runtime with SIGSEGV. Standard TFLite CPU kernels run reliably.
+                setUseXNNPACK(false)
             }
             val interp = Interpreter(modelBuffer, options)
 
@@ -132,6 +131,7 @@ class TFLiteFaceEmbedder(private val context: Context? = null) : FaceEmbedder {
      * mixes two incompatible spaces of different dimensionality. Callers treat an empty
      * result as "unknown" and fall back on geometry, which is honest.
      */
+    @Synchronized
     override fun getEmbedding(faceBitmap: Bitmap?): FloatArray {
         if (faceBitmap == null) return FloatArray(0)
         val interp = interpreter ?: return computeDeterministicFeatureVector(faceBitmap)
@@ -149,7 +149,8 @@ class TFLiteFaceEmbedder(private val context: Context? = null) : FaceEmbedder {
     }
 
     private fun runInference(interp: Interpreter, bitmap: Bitmap, mirrored: Boolean): FloatArray? {
-        return try {
+        return synchronized(interp) {
+            try {
             val size = inputSize
             val scaled = if (bitmap.width == size && bitmap.height == size) {
                 bitmap
@@ -187,6 +188,7 @@ class TFLiteFaceEmbedder(private val context: Context? = null) : FaceEmbedder {
         } catch (e: Throwable) {
             android.util.Log.e(TAG, "Inference failed", e)
             null
+        }
         }
     }
 

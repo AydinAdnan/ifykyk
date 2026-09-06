@@ -117,8 +117,9 @@ class ProductionVideoPipeline(private val context: Context) {
                 val emb = if (face.alignedCropBitmap != null) {
                     onnxEmbedder.getEmbedding(face.alignedCropBitmap)
                 } else FloatArray(0)
+                val isMultiPerson = detected.size > 1
                 face.copy(
-                    sharpnessScore = eval.overallQuality * 500f,
+                    isSoloShot = !isMultiPerson && face.isSoloShot && face.otherFaceBoxesInFrame.isEmpty(),
                     embedding = emb
                 )
             }
@@ -254,7 +255,9 @@ class ProductionVideoPipeline(private val context: Context) {
         // 5. HIGH RESOLUTION 1280p REFINEMENT
         val tStartRefine = System.currentTimeMillis()
         val personClusters = cropRefiner.refine(videoUri, draftClusters) { cluster ->
-            RepresentativeShotSelector.rank(cluster.appearances.flatMap { it.detections })
+            val allPersonDetections = clusterMap[cluster.id]?.flatMap { it.detections }
+                ?: cluster.appearances.flatMap { it.detections }
+            RepresentativeShotSelector.rank(allPersonDetections)
         }
         benchmark.refinementTimeMs = System.currentTimeMillis() - tStartRefine
         completedSteps.add(PipelineStep.COUNT_APPEARANCES)

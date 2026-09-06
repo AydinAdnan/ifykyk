@@ -1,4 +1,4 @@
-﻿package com.iykyk.assignment.ui.screens
+package com.iykyk.assignment.ui.screens
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -213,7 +213,7 @@ fun ResultsScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = "Great!  unique people found with  total appearances. \uD83D\uDE42",
+                    text = "Great! ${result.totalUniquePeople} unique people found with ${result.totalAppearances} total appearances. \uD83D\uDE42",
                     fontSize = 15.sp,
                     fontFamily = GoogleSansFamily,
                     color = TextPrimary
