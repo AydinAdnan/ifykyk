@@ -3,6 +3,7 @@ package com.iykyk.assignment
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.*
@@ -52,19 +53,31 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                             is ScreenState.Processing -> {
+                                BackHandler {
+                                    viewModel.resetToHome()
+                                }
                                 ProcessingScreen(
                                     progress = state.progress
                                 )
                             }
                             is ScreenState.Results -> {
+                                BackHandler {
+                                    viewModel.resetToHome()
+                                }
                                 ResultsScreen(
                                     result = state.result,
                                     onViewCollage = {
                                         viewModel.navigateTo(ScreenState.CollagePreview(state.result))
+                                    },
+                                    onBackToHome = {
+                                        viewModel.resetToHome()
                                     }
                                 )
                             }
                             is ScreenState.CollagePreview -> {
+                                BackHandler {
+                                    viewModel.navigateTo(ScreenState.Results(state.result))
+                                }
                                 CollagePreviewScreen(
                                     result = state.result,
                                     onSaveToGallery = { bitmap ->
@@ -79,18 +92,33 @@ class MainActivity : ComponentActivity() {
                                     },
                                     onViewBreakdown = {
                                         viewModel.navigateTo(ScreenState.AppearanceBreakdown(state.result))
+                                    },
+                                    onBackToResults = {
+                                        viewModel.navigateTo(ScreenState.Results(state.result))
+                                    },
+                                    onBackToHome = {
+                                        viewModel.resetToHome()
                                     }
                                 )
                             }
                             is ScreenState.AppearanceBreakdown -> {
+                                BackHandler {
+                                    viewModel.navigateTo(ScreenState.CollagePreview(state.result))
+                                }
                                 AppearanceBreakdownScreen(
                                     result = state.result,
                                     onBackToCollage = {
                                         viewModel.navigateTo(ScreenState.CollagePreview(state.result))
+                                    },
+                                    onBackToHome = {
+                                        viewModel.resetToHome()
                                     }
                                 )
                             }
                             is ScreenState.CollageSaved -> {
+                                BackHandler {
+                                    viewModel.resetToHome()
+                                }
                                 CollageSavedScreen(
                                     result = state.result,
                                     onShare = {

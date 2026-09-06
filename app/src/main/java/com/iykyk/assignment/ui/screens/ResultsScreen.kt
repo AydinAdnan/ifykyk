@@ -21,6 +21,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.filled.Home
 import com.iykyk.assignment.domain.model.AnalysisResult
 import com.iykyk.assignment.ui.components.*
 import com.iykyk.assignment.ui.theme.*
@@ -29,6 +31,7 @@ import com.iykyk.assignment.ui.theme.*
 fun ResultsScreen(
     result: AnalysisResult,
     onViewCollage: () -> Unit,
+    onBackToHome: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val chipColors = listOf(ChipPurple, ChipYellow, ChipGreen, ChipPink, ChipBlue)
@@ -41,7 +44,41 @@ fun ResultsScreen(
             .verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // Top Home / New Video Bar
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(CardWhite)
+                    .border(2.dp, BrutalBorder, RoundedCornerShape(8.dp))
+                    .clickable { onBackToHome() }
+                    .padding(horizontal = 14.dp, vertical = 8.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.Home,
+                        contentDescription = "New Video",
+                        tint = TextPrimary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "NEW VIDEO",
+                        fontSize = 13.sp,
+                        fontFamily = GoogleSansFamily,
+                        color = TextPrimary
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         // 1. Green Ripped Header: "RESULTS ♡"
         Box(modifier = Modifier.fillMaxWidth()) {
@@ -230,6 +267,18 @@ fun ResultsScreen(
             backgroundColor = CardGreen,
             trailingIcon = {
                 Icon(Icons.Default.ArrowOutward, contentDescription = null, tint = TextPrimary)
+            }
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // 6. White Action Button: ANALYZE ANOTHER VIDEO
+        BrutalButton(
+            text = "ANALYZE ANOTHER VIDEO",
+            onClick = onBackToHome,
+            backgroundColor = CardWhite,
+            trailingIcon = {
+                Icon(Icons.Default.Home, contentDescription = null, tint = TextPrimary)
             }
         )
 

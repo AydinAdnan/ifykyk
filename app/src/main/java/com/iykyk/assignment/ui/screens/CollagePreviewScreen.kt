@@ -1,17 +1,20 @@
-﻿package com.iykyk.assignment.ui.screens
+package com.iykyk.assignment.ui.screens
 
 import android.graphics.Bitmap
 import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -36,6 +39,8 @@ fun CollagePreviewScreen(
     onSaveToGallery: (Bitmap) -> Unit,
     onShareCollage: (Bitmap) -> Unit,
     onViewBreakdown: () -> Unit,
+    onBackToResults: () -> Unit,
+    onBackToHome: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -48,7 +53,66 @@ fun CollagePreviewScreen(
             .verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(modifier = Modifier.height(28.dp))
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // Top Navigation Row: Back to Results & Home
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(CardWhite)
+                    .border(2.dp, BrutalBorder, RoundedCornerShape(8.dp))
+                    .clickable { onBackToResults() }
+                    .padding(horizontal = 14.dp, vertical = 8.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = TextPrimary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "BACK",
+                        fontSize = 13.sp,
+                        fontFamily = GoogleSansFamily,
+                        color = TextPrimary
+                    )
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(CardWhite)
+                    .border(2.dp, BrutalBorder, RoundedCornerShape(8.dp))
+                    .clickable { onBackToHome() }
+                    .padding(horizontal = 14.dp, vertical = 8.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.Home,
+                        contentDescription = "Home",
+                        tint = TextPrimary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "HOME",
+                        fontSize = 13.sp,
+                        fontFamily = GoogleSansFamily,
+                        color = TextPrimary
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(18.dp))
 
         // 1. Top Badge: "COLLAGE PREVIEW" in Cherry Bomb One
         Box(
@@ -163,6 +227,17 @@ fun CollagePreviewScreen(
             backgroundColor = CardWhite,
             trailingIcon = {
                 Icon(Icons.AutoMirrored.Filled.List, contentDescription = null, tint = TextPrimary)
+            }
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        BrutalButton(
+            text = "ANALYZE ANOTHER VIDEO",
+            onClick = onBackToHome,
+            backgroundColor = CardPurple,
+            trailingIcon = {
+                Icon(Icons.Default.Home, contentDescription = null, tint = TextPrimary)
             }
         )
 

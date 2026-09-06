@@ -8,6 +8,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -26,6 +30,7 @@ import com.iykyk.assignment.ui.theme.*
 fun AppearanceBreakdownScreen(
     result: AnalysisResult,
     onBackToCollage: () -> Unit,
+    onBackToHome: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val dotColors = listOf(ChipPurple, ChipYellow, ChipGreen, ChipPink, ChipBlue)
@@ -237,7 +242,22 @@ fun AppearanceBreakdownScreen(
         BrutalButton(
             text = "BACK TO COLLAGE",
             onClick = onBackToCollage,
-            backgroundColor = CardGreen
+            backgroundColor = CardGreen,
+            trailingIcon = {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = TextPrimary)
+            }
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // 5. Home Button
+        BrutalButton(
+            text = "ANALYZE ANOTHER VIDEO",
+            onClick = onBackToHome,
+            backgroundColor = CardWhite,
+            trailingIcon = {
+                Icon(Icons.Default.Home, contentDescription = null, tint = TextPrimary)
+            }
         )
 
         Spacer(modifier = Modifier.height(48.dp))
