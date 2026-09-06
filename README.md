@@ -138,13 +138,6 @@ an appearance is defined as **one continuous visible segment**:
 - when they re-enter, a new tracklet starts.
 - blurred whip-pans trigger `tracker.onSceneBoundary()`, which resets track associations without awarding false appearances.
 - multi-person frames: each clearly visible person in the frame belongs to their own independent tracklet. each person's appearance counter increments by 1.
-- on sample 1, this produces:
-  - suit man: 3-4 appearances
-  - beige hijab woman: 4 appearances
-  - cream hijab woman: 4 appearances
-  - asian woman: 4 appearances
-  - headset man: 3-4 appearances
-  - total unique people: 5
 
 ---
 
