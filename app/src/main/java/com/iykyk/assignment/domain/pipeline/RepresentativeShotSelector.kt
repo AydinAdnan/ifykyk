@@ -38,8 +38,13 @@ object RepresentativeShotSelector {
 
         val withCrop = candidates.filter { it.generousCropBitmap != null }.orAll(candidates)
 
+        // 0. Solo Frame Gate: Never feature a multi-person frame in the final collage
+        // if this person has any solo shots. Group frames increment appearance counts,
+        // but representative collage tiles must feature only the person's best solo portrait.
+        var pool = withCrop.filter { it.isSoloShot && it.otherFaceBoxesInFrame.isEmpty() }.orAll(withCrop)
+
         // 1. No other person may appear in the tile.
-        var pool = withCrop.filter { it.hasCleanCrop }.orAll(withCrop)
+        pool = pool.filter { it.hasCleanCrop }.orAll(pool)
 
         // 2. The whole face must be in frame; a face sliced by the frame edge cannot be
         //    framed generously no matter how good the crop planner is.
@@ -79,6 +84,7 @@ object RepresentativeShotSelector {
 
         return candidates.sortedWith(
             compareByDescending<DetectedFace> { it.generousCropBitmap != null }
+                .thenByDescending { it.isSoloShot && it.otherFaceBoxesInFrame.isEmpty() }
                 .thenByDescending { it.hasCleanCrop }
                 .thenByDescending { it.isFullyVisible }
                 .thenByDescending {

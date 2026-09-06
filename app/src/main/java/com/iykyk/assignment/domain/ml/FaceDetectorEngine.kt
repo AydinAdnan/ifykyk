@@ -63,9 +63,12 @@ class FaceDetectorEngine(
             .addOnSuccessListener { mlkitFaces ->
                 val validFaces = mutableListOf<DetectedFace>()
 
+                // Suppress duplicate overlapping detections of the same face in this frame
+                val nmsFaces = applyNms(mlkitFaces)
+
                 // Every on-screen face is kept as crop context, even when it is too small
                 // or too clipped to identify, so that neighbour-avoidance sees all of them.
-                val onScreenFaces = mlkitFaces.filter { face ->
+                val onScreenFaces = nmsFaces.filter { face ->
                     val box = face.boundingBox
                     box.width() > 0 && box.height() > 0 &&
                         box.right > 0 && box.bottom > 0 &&
@@ -89,7 +92,7 @@ class FaceDetectorEngine(
 
                     // Crops
                     val aligned = FaceAlignmentHelper.alignFace(
-                        frameBitmap, box, leftEye, rightEye, alignedCropSize
+                        frameBitmap, box, leftEye, rightEye, alignedCropSize, headEulerZ = face.headEulerAngleZ
                     )
                     val (portraitCrop, cropPlan) =
                         FaceAlignmentHelper.cropPortrait(
@@ -138,4 +141,34 @@ class FaceDetectorEngine(
                 }
             }
     }
+
+    private fun applyNms(faces: List<Face>): List<Face> {
+        if (faces.size <= 1) return faces
+        val sorted = faces.sortedByDescending { it.boundingBox.width() * it.boundingBox.height() }
+        val kept = mutableListOf<Face>()
+        for (candidate in sorted) {
+            val candBox = candidate.boundingBox
+            val isDuplicate = kept.any { existing ->
+                boxOverlapRatio(candBox, existing.boundingBox) > 0.40f
+            }
+            if (!isDuplicate) {
+                kept.add(candidate)
+            }
+        }
+        return kept
+    }
+
+    private fun boxOverlapRatio(a: android.graphics.Rect, b: android.graphics.Rect): Float {
+        val interLeft = kotlin.math.max(a.left, b.left)
+        val interTop = kotlin.math.max(a.top, b.top)
+        val interRight = kotlin.math.min(a.right, b.right)
+        val interBottom = kotlin.math.min(a.bottom, b.bottom)
+        val interW = interRight - interLeft
+        val interH = interBottom - interTop
+        if (interW <= 0 || interH <= 0) return 0f
+        val interArea = interW.toFloat() * interH
+        val minArea = kotlin.math.min(a.width() * a.height(), b.width() * b.height()).toFloat()
+        return if (minArea > 0f) interArea / minArea else 0f
+    }
 }
+

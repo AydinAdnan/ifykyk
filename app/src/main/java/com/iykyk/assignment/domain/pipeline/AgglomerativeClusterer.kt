@@ -179,14 +179,45 @@ class AgglomerativeClusterer(
         (a + b).map { identities.getValue(it.id).confidence }.minOrNull()?.coerceIn(0f, 1f) ?: 0f
 
     /**
-     * True when any tracklet of one group shares a frame with any tracklet of the other.
-     * Being visible simultaneously is proof of being different people, and because the
-     * check runs over whole groups the constraint survives every merge.
+     * True when any tracklet of one group shares a frame with any tracklet of the other
+     * with distinctly separate bounding boxes. Being visible simultaneously as separate
+     * faces is proof of being different people, and because the check runs over whole
+     * groups the constraint survives every merge.
      */
     private fun coOccur(a: List<Tracklet>, b: List<Tracklet>): Boolean {
         val framesA = HashSet<Int>()
         for (tracklet in a) framesA.addAll(tracklet.frameIndices)
-        return b.any { tracklet -> tracklet.frameIndices.any { it in framesA } }
+
+        for (tb in b) {
+            for (fb in tb.detections) {
+                if (fb.frameIndex in framesA) {
+                    val boxB = fb.boundingBox
+                    for (ta in a) {
+                        val fa = ta.detections.firstOrNull { it.frameIndex == fb.frameIndex } ?: continue
+                        val boxA = fa.boundingBox
+                        if (boxA == null || boxB == null) return true
+                        // If they are distinct separate faces in the frame, they cannot be the same person
+                        if (boxIoU(boxA, boxB) < 0.35f) {
+                            return true
+                        }
+                    }
+                }
+            }
+        }
+        return false
+    }
+
+    private fun boxIoU(a: android.graphics.Rect, b: android.graphics.Rect): Float {
+        val interLeft = max(a.left, b.left)
+        val interTop = max(a.top, b.top)
+        val interRight = min(a.right, b.right)
+        val interBottom = min(a.bottom, b.bottom)
+        val interW = interRight - interLeft
+        val interH = interBottom - interTop
+        if (interW <= 0 || interH <= 0) return 0f
+        val inter = interW.toFloat() * interH
+        val union = a.width().toFloat() * a.height() + b.width().toFloat() * b.height() - inter
+        return if (union <= 0f) 0f else inter / union
     }
 
     private fun averageLinkage(

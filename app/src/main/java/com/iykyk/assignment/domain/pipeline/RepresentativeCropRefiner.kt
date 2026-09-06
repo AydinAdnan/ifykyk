@@ -62,9 +62,10 @@ class RepresentativeCropRefiner(
         val shot: DetectedFace,
         val crop: Bitmap,
         val isClean: Boolean,
+        val isSolo: Boolean,
         val sharpness: Float
     ) {
-        val isAcceptable: Boolean get() = isClean && sharpness >= MIN_SHARPNESS
+        val isAcceptable: Boolean get() = isClean && (!shot.isSoloShot || isSolo) && sharpness >= MIN_SHARPNESS
     }
 
     suspend fun refine(
@@ -106,14 +107,15 @@ class RepresentativeCropRefiner(
         return fallback?.let { cluster.withShot(it) } ?: cluster
     }
 
-    /** Ranks partial failures so the fallback prefers a clean blurred shot over a crowded one. */
+    /** Ranks partial failures so the fallback prefers a clean solo shot over a crowded one. */
     private val Verified.score: Float
-        get() = (if (isClean) 1000f else 0f) + min(sharpness, MIN_SHARPNESS)
+        get() = (if (isClean) 1000f else 0f) + (if (isSolo) 500f else 0f) + min(sharpness, MIN_SHARPNESS)
 
     private fun PersonCluster.withShot(verified: Verified): PersonCluster = copy(
         representativeShot = verified.shot.copy(
             generousCropBitmap = verified.crop,
             hasCleanCrop = verified.isClean,
+            isSoloShot = verified.isSolo,
             sharpnessScore = verified.sharpness
         )
     )
@@ -157,6 +159,7 @@ class RepresentativeCropRefiner(
                 shot = shot,
                 crop = crop,
                 isClean = plan.isClean,
+                isSolo = detected.size <= 1,
                 sharpness = FaceAlignmentHelper.computeSharpness(frame, targetBox)
             )
         } catch (e: Exception) {

@@ -39,7 +39,8 @@ object FaceAlignmentHelper {
         leftEye: PointF?,
         rightEye: PointF?,
         outputSize: Int,
-        faceRatio: Float = 0.8f
+        faceRatio: Float = 0.8f,
+        headEulerZ: Float = 0f
     ): Bitmap {
         val output = Bitmap.createBitmap(outputSize, outputSize, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(output)
@@ -51,11 +52,13 @@ object FaceAlignmentHelper {
         val scale = (outputSize * faceRatio) / faceSpan
 
         val rollDegrees = if (leftEye != null && rightEye != null) {
-            val dx = rightEye.x - leftEye.x
-            val dy = rightEye.y - leftEye.y
+            // leftEye is the subject's left eye (viewer's right, larger x)
+            // rightEye is the subject's right eye (viewer's left, smaller x)
+            val dx = leftEye.x - rightEye.x
+            val dy = leftEye.y - rightEye.y
             Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
         } else {
-            0f
+            headEulerZ
         }
 
         val matrix = Matrix().apply {
