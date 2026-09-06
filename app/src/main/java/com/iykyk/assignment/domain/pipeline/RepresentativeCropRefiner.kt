@@ -44,7 +44,7 @@ class RepresentativeCropRefiner(
         const val CROP_MAX_EDGE = 900
 
         /** How many candidate frames to try per person before settling. */
-        const val MAX_CANDIDATES = 4
+        const val MAX_CANDIDATES = 1
 
         /** Minimum overlap for a high-resolution detection to be the same face. */
         private const val MIN_MATCH_IOU = 0.3f
@@ -72,6 +72,24 @@ class RepresentativeCropRefiner(
         clusters: List<PersonCluster>,
         rankedCandidates: (PersonCluster) -> List<DetectedFace>
     ): List<PersonCluster> {
+        // Fast-path: if every cluster already has a verified, centered solo portrait with clean crop,
+        // use them immediately without opening a blocking decode session.
+        val needsDecode = clusters.any { cluster ->
+            val top = rankedCandidates(cluster).firstOrNull()
+            top == null || top.generousCropBitmap == null ||
+                !RepresentativeShotSelector.isSoloPortrait(top) ||
+                !top.hasCleanCrop ||
+                top.sharpnessScore < 40f
+        }
+
+        if (!needsDecode) {
+            android.util.Log.i("CropRefiner", "All ${clusters.size} clusters have pristine existing crops. Bypassing re-decode.")
+            return clusters.map { cluster ->
+                val best = rankedCandidates(cluster).first()
+                cluster.copy(representativeShot = best)
+            }
+        }
+
         // One session for every person and every retry, rather than reopening the video
         // for each decode.
         return frameExtractor.withSession(videoUri) { session ->
@@ -84,6 +102,17 @@ class RepresentativeCropRefiner(
         cluster: PersonCluster,
         candidates: List<DetectedFace>
     ): PersonCluster {
+        // Check if top candidate is already pristine
+        val top = candidates.firstOrNull()
+        if (top != null && top.generousCropBitmap != null &&
+            RepresentativeShotSelector.isSoloPortrait(top) &&
+            top.hasCleanCrop &&
+            top.sharpnessScore >= 40f
+        ) {
+            android.util.Log.i("CropRefiner", "Person ${cluster.id} using existing solo crop @ ${top.timestampMs}ms")
+            return cluster.copy(representativeShot = top)
+        }
+
         var fallback: Verified? = null
 
         for (candidate in candidates.take(MAX_CANDIDATES)) {

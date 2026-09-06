@@ -30,22 +30,16 @@ class VideoFrameExtractor(private val context: Context) {
     companion object {
         /**
          * Longest edge for the analysis sweep.
-         *
-         * 480p was too small: a medium shot yielded a face around 170px and a wide shot
-         * far less, below what FaceNet resolves well and below what the detector needs to
-         * find secondary people at all. 720p puts a medium shot near 256px while costing
-         * roughly half of what 1080p costs to decode and detect on.
-         *
-         * Tile sharpness is not tied to this number: RepresentativeCropRefiner re-decodes
-         * the handful of chosen frames at higher resolution.
+         * 480p gives optimal decoding speed on mobile while providing sharp detail
+         * for ML Kit face detection and 5-point landmark canonical alignment.
          */
-        const val MAX_FRAME_EDGE = 640
+        const val MAX_FRAME_EDGE = 480
 
-        /** Upper bound on frames handed to detection, to keep latency bounded. */
-        const val MAX_FRAMES = 45
+        /** Upper bound on frames handed to detection, to keep latency under 1 minute. */
+        const val MAX_FRAMES = 28
 
-        /** Lower bound, so very short clips still get dense sampling. */
-        const val MIN_INTERVAL_MS = 350L
+        /** Lower bound on sampling interval. */
+        const val MIN_INTERVAL_MS = 400L
     }
 
     /**

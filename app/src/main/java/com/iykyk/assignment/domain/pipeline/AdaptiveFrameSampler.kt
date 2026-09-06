@@ -29,10 +29,15 @@ class AdaptiveFrameSampler(
         previousThumb = null
     }
 
+    companion object {
+        const val STATIC_DELTA_THRESHOLD = 0.035f
+    }
+
     /**
-     * Determines the optimal time increment to the next frame based on the current frame's visual delta.
+     * Computes the Mean Absolute Difference (MAD) between this frame and the previous frame
+     * using a 32x32 luminance thumbnail. Returns 1.0f on the first frame.
      */
-    fun computeNextIntervalMs(currentFrame: Bitmap): Long {
+    fun computeDelta(currentFrame: Bitmap): Float {
         val size = 32
         val scaled = Bitmap.createScaledBitmap(currentFrame, size, size, true)
         val pixels = IntArray(size * size)
@@ -52,16 +57,21 @@ class AdaptiveFrameSampler(
         previousThumb = luma
 
         if (prev == null) {
-            return normalStepMs
+            return 1.0f
         }
 
-        // Compute Mean Absolute Difference (MAD)
         var mad = 0.0
         for (i in luma.indices) {
             mad += abs(luma[i] - prev[i])
         }
-        val delta = (mad / luma.size).toFloat()
+        return (mad / luma.size).toFloat()
+    }
 
+    /**
+     * Determines the optimal time increment to the next frame based on the current frame's visual delta.
+     */
+    fun computeNextIntervalMs(currentFrame: Bitmap): Long {
+        val delta = computeDelta(currentFrame)
         return when {
             delta < 0.04f -> staticStepMs // Static scene: 1 FPS
             delta > 0.18f -> fastStepMs // Fast motion / high pan: 5 FPS

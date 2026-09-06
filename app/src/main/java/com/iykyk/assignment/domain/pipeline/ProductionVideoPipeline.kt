@@ -79,6 +79,7 @@ class ProductionVideoPipeline(private val context: Context) {
         var bestQualitySeen = 0f
         var framesProcessed = 0
         var lastEmittedPct = 10
+        var previousQualityFaces = listOf<DetectedFace>()
 
         val sweepResult = frameExtractor.forEachFrame(videoUri) { frame, expectedTotal ->
             framesProcessed++
@@ -89,6 +90,7 @@ class ProductionVideoPipeline(private val context: Context) {
             if (sceneCut != null) {
                 benchmark.sceneCutsCount++
                 tracker.onSceneBoundary()
+                previousQualityFaces = emptyList()
             }
 
             // Transition detection (whip pan, blur, dissolve)
@@ -96,32 +98,43 @@ class ProductionVideoPipeline(private val context: Context) {
             if (transition != null) {
                 benchmark.transitionsCount++
                 tracker.onSceneBoundary()
+                previousQualityFaces = emptyList()
             }
 
-            // Detect faces
-            val tStartDet = System.currentTimeMillis()
-            val detected = faceDetector.detectFacesInFrame(frame.bitmap, frame.index, frame.timestampMs)
-            benchmark.detectionTimeMs += (System.currentTimeMillis() - tStartDet)
-            benchmark.totalFacesDetected += detected.size
+            // Visual delta analysis between consecutive frames
+            val delta = adaptiveSampler.computeDelta(frame.bitmap)
+            val isStaticScene = delta < AdaptiveFrameSampler.STATIC_DELTA_THRESHOLD && sceneCut == null && transition == null && framesProcessed > 1
 
-            // Evaluate fast quality on detected faces & pre-compute appearance embeddings
-            val qualityFaces = detected.map { face ->
-                val eval = serFiqQualityEstimator.evaluateFast(
-                    sourceFrame = frame.bitmap,
-                    box = face.boundingBox ?: android.graphics.Rect(0, 0, 100, 100),
-                    landmarks = listOf(face.leftEye, face.rightEye, face.nose, face.mouthLeft, face.mouthRight),
-                    eulerX = 0f,
-                    eulerY = face.headEulerY,
-                    eulerZ = face.headEulerZ
-                )
-                val emb = if (face.alignedCropBitmap != null) {
-                    onnxEmbedder.getEmbedding(face.alignedCropBitmap)
-                } else FloatArray(0)
+            val qualityFaces: List<DetectedFace>
+            if (isStaticScene && previousQualityFaces.isNotEmpty()) {
+                // Delta optimization: Static scene - skip ML Kit detection & SerFiq computation.
+                // Sustain tracks with propagated bounding boxes.
+                qualityFaces = previousQualityFaces.map { prev ->
+                    prev.copy(frameIndex = frame.index, timestampMs = frame.timestampMs)
+                }
+            } else {
+                // Detect faces
+                val tStartDet = System.currentTimeMillis()
+                val detected = faceDetector.detectFacesInFrame(frame.bitmap, frame.index, frame.timestampMs)
+                benchmark.detectionTimeMs += (System.currentTimeMillis() - tStartDet)
+                benchmark.totalFacesDetected += detected.size
+
                 val isMultiPerson = detected.size > 1
-                face.copy(
-                    isSoloShot = !isMultiPerson && face.isSoloShot && face.otherFaceBoxesInFrame.isEmpty(),
-                    embedding = emb
-                )
+                qualityFaces = detected.map { face ->
+                    val eval = serFiqQualityEstimator.evaluateFast(
+                        sourceFrame = frame.bitmap,
+                        box = face.boundingBox ?: android.graphics.Rect(0, 0, 100, 100),
+                        landmarks = listOf(face.leftEye, face.rightEye, face.nose, face.mouthLeft, face.mouthRight),
+                        eulerX = 0f,
+                        eulerY = face.headEulerY,
+                        eulerZ = face.headEulerZ
+                    )
+                    face.copy(
+                        isSoloShot = !isMultiPerson && face.isSoloShot && face.otherFaceBoxesInFrame.isEmpty(),
+                        embedding = FloatArray(0) // Defer ONNX embeddings to Step 2
+                    )
+                }
+                previousQualityFaces = qualityFaces
             }
 
             // DeepSORT-Lite frame association
@@ -191,7 +204,7 @@ class ProductionVideoPipeline(private val context: Context) {
         for (tracklet in completedTracklets) {
             val candidateFaces = tracklet.usableDetections(0.20f)
                 .sortedByDescending { it.recognitionQuality }
-                .take(3)
+                .take(2)
                 .ifEmpty { tracklet.detections.take(1) }
 
             val vectors = mutableListOf<FloatArray>()
